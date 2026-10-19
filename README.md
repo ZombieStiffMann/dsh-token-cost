@@ -1,5 +1,8 @@
 # dsh-token-cost
 
+[![tests](https://github.com/ZombieStiffMann/dsh-token-cost/actions/workflows/test.yml/badge.svg)](https://github.com/ZombieStiffMann/dsh-token-cost/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A [DeepSeek Harness](https://deepseek-harness.github.io/deepseek-harness/) plugin
 that shows **how much the current session has cost so far**, right next to the
 built-in token-usage pill below the composer. Costs are computed from the
@@ -12,6 +15,8 @@ rate **and the peak/off-peak band of the moment each token was consumed**.
 ## Preview
 
 The pill sits after the shipped activity/usage pills. Click it for the breakdown:
+
+![Token cost pill and breakdown dialog in the DeepSeek Harness composer](docs/preview.png)
 
 ```text
 Token 费用                    ¥1.97
@@ -27,8 +32,6 @@ Token 合计        44.7M
 DeepSeek 官方价格
 https://api-docs.deepseek.com/zh-cn/quick_start/pricing
 ```
-
-<!-- Add a real screenshot at docs/preview.png and reference it here. -->
 
 ## Features
 
@@ -171,6 +174,7 @@ Repository layout:
 | `client.js` | Client half: composer-dock cost pill and breakdown dialog |
 | `cordis.patch.yml` | Bundle patch that inserts the Host `token-cost` row |
 | `locale/` | Plugin Manager display metadata (en/zh) |
+| `docs/preview.png` | Screenshot used by this README |
 | `test/` | Offline tests and the minimized pricing-page fixture |
 
 Run the tests (Node 20+; CI runs them on 20/22/24):
