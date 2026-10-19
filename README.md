@@ -155,7 +155,7 @@ plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost
 Pin a release:
 
 ```text
-plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost#v0.4.0
+plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost#v0.1.0
 ```
 
 For local development, point the manager at a checkout instead:

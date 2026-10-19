@@ -520,11 +520,19 @@ window.__ModuleLoader__.load({
       return h(
         'svg',
         Object.assign({ viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', 'aria-hidden': true }, props ?? {}),
-        h('circle', { cx: 8, cy: 8, r: 6.25, stroke: 'currentColor', strokeWidth: 1.2 }),
+        // Generic coin stack: reads as "money" without implying one currency.
+        h('ellipse', { cx: 8, cy: 3.9, rx: 4.4, ry: 1.7, stroke: 'currentColor', strokeWidth: 1.2 }),
         h('path', {
-          d: 'M5.4 4.9 8 7.6l2.6-2.7M8 7.6v4.1M6.1 9.2h3.8M6.1 10.6h3.8',
+          d: 'M3.6 3.9v2.7c0 .95 1.97 1.7 4.4 1.7s4.4-.75 4.4-1.7V3.9',
           stroke: 'currentColor',
-          strokeWidth: 1.1,
+          strokeWidth: 1.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
+        h('path', {
+          d: 'M3.6 6.6v2.7c0 .95 1.97 1.7 4.4 1.7s4.4-.75 4.4-1.7V6.6',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
         }),
@@ -622,13 +630,13 @@ window.__ModuleLoader__.load({
     function SettingsIcon(props) {
       return h(
         'svg',
-        Object.assign({ viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', 'aria-hidden': true }, props ?? {}),
-        h('circle', { cx: 8, cy: 8, r: 2.15, stroke: 'currentColor', strokeWidth: 1.2 }),
+        Object.assign({ viewBox: '0 0 24 24', width: 14, height: 14, fill: 'none', 'aria-hidden': true }, props ?? {}),
         h('path', {
-          d: 'M8 1.5v2.1M8 12.4v2.1M1.5 8h2.1M12.4 8h2.1M3.4 3.4l1.5 1.5M11.1 11.1l1.5 1.5M12.6 3.4l-1.5 1.5M4.9 11.1l-1.5 1.5',
+          d: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
           stroke: 'currentColor',
-          strokeWidth: 1.1,
+          strokeWidth: 2,
           strokeLinecap: 'round',
+          strokeLinejoin: 'round',
         }),
       );
     }
