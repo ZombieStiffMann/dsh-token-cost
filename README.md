@@ -3,6 +3,8 @@
 [![tests](https://github.com/ZombieStiffMann/dsh-token-cost/actions/workflows/test.yml/badge.svg)](https://github.com/ZombieStiffMann/dsh-token-cost/actions/workflows/test.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**English** | [中文](README.zh-CN.md)
+
 A [DeepSeek Harness](https://deepseek-harness.github.io/deepseek-harness/) plugin
 that shows **how much the current session has cost so far**, right next to the
 built-in token-usage pill below the composer. It prices every provider-reported
@@ -21,8 +23,8 @@ its own tab — a tab only shows the billing dimensions that model actually has:
 
 ![Cost popover with the DeepSeek tab, K/M token counts, peak/off-peak rows and the official price link with its data date](docs/preview.png)
 
-The gear in the title row opens the language and display-currency settings (see
-[Settings](#settings)).
+The wrench icon in the title row opens the language and display-currency
+settings (see [Settings](#settings)).
 
 ```text
 Token 费用                              ¥2.32
@@ -170,8 +172,8 @@ or disable it later from the **Plugins** page (or
 
 ## Settings
 
-Inside the cost popover, the gear button in the title row opens a small settings
-panel (bilingual, following the plugin language):
+Inside the cost popover, the wrench button in the title row opens a small
+settings panel (bilingual, following the plugin language):
 
 - **Language**: 跟随应用 / 中文 / English. The plugin ships zh and en
   dictionaries; *follow the app* is the default, and the override applies to
