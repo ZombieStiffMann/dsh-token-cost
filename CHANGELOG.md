@@ -4,6 +4,49 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-20
+
+Per-model tabs, upgrade compatibility and international (USD) vendor prices.
+
+### Added
+
+- Curated USD price catalogs for six international vendors, read from each
+  vendor's own official pricing page on 2026-10-20: OpenAI (19 models),
+  Anthropic (15), Google Gemini (10), xAI (8), Mistral AI (8) and Cohere (6) —
+  66 USD models with per-vendor evidence notes under `catalog/world/notes/`.
+- A provider/model-id survey of this DSH build's installed pi-ai catalog
+  (`catalog/world/notes/provider-map.md`), so provider hints and foreign model
+  ids match what the app actually routes.
+- The catalog subsystem now loads two directories: `catalog/china/` (CNY/¥) and
+  `catalog/world/` (USD/$). `loadCatalog()` returns both, the validator checks
+  both, and a directory's currency is enforced (`node catalog/validate.js`).
+- Context-length pricing tiers for foreign vendors that publish them (OpenAI and
+  xAI long context, Gemini long context, Claude Haiku 5.5).
+- Aliases bridge official wire ids and the ids shipped by DSH's pi-ai catalog
+  where they differ (e.g. `mistral-medium-3.5` → `mistral-medium-3-5`).
+- Each model tab now discloses the price data date next to its official price
+  link (`数据日期 2026-10-20` / `Data as of 2026-10-20`).
+
+### Changed
+
+- The cost dialog is now strictly one tab per model. The aggregate tab is gone:
+  every tab shows only the billing dimensions that model actually has —
+  cache-hit input, cache-miss input and output, plus peak/off-peak cost rows for
+  vendors with official time bands (DeepSeek). Flat-price vendors (Qwen, GLM,
+  Kimi, MiMo, ...) show a short localized note that they have no peak/off-peak
+  bands instead of meaningless rows.
+- Sessions that mix CNY and USD models show both totals side by side
+  (`¥2.32 · $0.14`); currencies are never converted or summed together.
+- The README documents the international vendor table, provider setup, promo
+  prices, the data-date disclosure and the foreign-pricing limitations.
+
+### Fixed
+
+- A browser tab still running the previous client build across an upgrade no
+  longer loses the cost pill: the wire view also carries the legacy
+  single-currency fields, and the client upgrades a legacy projection value in
+  place instead of rejecting it.
+
 ## [0.2.0] - 2026-10-19
 
 Multi-vendor pricing with a tabbed per-model breakdown.

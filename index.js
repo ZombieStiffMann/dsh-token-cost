@@ -401,6 +401,8 @@ function viewModels(models) {
       name: model.name,
       vendor: model.vendor,
       vendorName: model.vendorName,
+      // Legacy clients address the old per-vendor rate table by this key.
+      pricingKey: model.vendor,
       priced: model.priced,
       currency: model.currency,
       micro: model.micro,
@@ -423,14 +425,27 @@ function viewModels(models) {
 /** Client-facing value: complete, JSON-safe and self-describing. */
 function buildView(state) {
   const unpricedModels = Object.values(state.models).filter((model) => !model.priced);
+  const currencies = sortedCurrencies(state.currencies);
+  const models = viewModels(state.models);
+  const primary = currencies.find((currency) => currency.code === 'CNY') ?? currencies[0] ?? null;
+  const primaryModel = models.find((model) => model.priced && model.source !== null) ?? models.find((model) => model.priced) ?? null;
   return {
-    currencies: sortedCurrencies(state.currencies),
+    currencies,
     tokens: state.tokens,
     tokensTotal: totalTokens(state.tokens),
-    models: viewModels(state.models),
+    models,
     unpricedModels: [...new Set(unpricedModels.map((model) => model.model))],
     unpricedTokens: unpricedModels.reduce((sum, model) => sum + totalTokens(model.tokens), 0),
     lastUpdated: state.lastTime,
+    // Legacy single-currency shape kept for a browser tab still running the
+    // previous client build across an upgrade. New clients ignore these fields.
+    currency: primary === null ? { code: 'CNY', symbol: '¥' } : { code: primary.code, symbol: primary.symbol },
+    micro: primary === null ? 0 : primary.micro,
+    micros: primary === null ? zeroMicros() : primary.micros,
+    peakMicro: primary === null ? 0 : primary.peakMicro,
+    offPeakMicro: primary === null ? 0 : primary.offPeakMicro,
+    saving: primary === null ? 0 : primary.saving,
+    price: primaryModel === null ? null : { source: primaryModel.source, asOf: primaryModel.asOf, models: {} },
   };
 }
 //#endregion
@@ -581,7 +596,7 @@ async function fetchText(url, timeoutMs) {
  * afterwards; the curated China vendor catalogs come from the repository and do
  * not change at runtime.
  */
-function startPriceRefresh(ctx, { userConfig, catalogRef, cacheFile, chinaVendors, deepseekConfig }) {
+function startPriceRefresh(ctx, { userConfig, catalogRef, cacheFile, curatedVendors, deepseekConfig }) {
   const url = typeof userConfig.priceUrl === 'string' && userConfig.priceUrl !== '' ? userConfig.priceUrl : OFFICIAL_PRICE_URL;
   const hours = typeof userConfig.refreshHours === 'number' && Number.isFinite(userConfig.refreshHours) ? Math.min(Math.max(userConfig.refreshHours, 1), 168) : 24;
   ctx.effect(() => {
@@ -594,7 +609,7 @@ function startPriceRefresh(ctx, { userConfig, catalogRef, cacheFile, chinaVendor
         const parsed = parseOfficialPricingPage(html, { now: Date.now(), sourceUrl: url });
         if (parsed === null || disposed) return;
         const deepseekPricing = normalizePricing(deepseekConfig, catalogFromOfficial(parsed));
-        catalogRef.current = buildCostCatalog({ deepseekPricing, chinaVendors, userConfig });
+        catalogRef.current = buildCostCatalog({ deepseekPricing, curatedVendors, userConfig });
         await saveCachedCatalog(cacheFile, parsed);
       } catch {
         // Keep the previous catalog: a network or layout failure must never
@@ -622,9 +637,9 @@ export function apply(ctx, config) {
   const userConfig = typeof config === 'object' && config !== null && !Array.isArray(config) ? config : {};
   const cacheFile = typeof userConfig.cacheFile === 'string' && userConfig.cacheFile !== '' ? userConfig.cacheFile : defaultCacheFile();
 
-  let chinaVendors = [];
+  let curatedVendors = [];
   try {
-    chinaVendors = loadCatalog();
+    curatedVendors = loadCatalog();
   } catch (error) {
     // A rejected data file must not take the whole plugin (and its projection
     // key) down: keep DeepSeek pricing and let unknown routes show as unpriced.
@@ -634,12 +649,12 @@ export function apply(ctx, config) {
   const deepseekConfig = deepseekConfigOf(userConfig);
   const deepseekBase = readCachedCatalog(cacheFile) ?? DEFAULT_PRICING;
   const deepseekPricing = normalizePricing(deepseekConfig, deepseekBase);
-  const catalogRef = { current: buildCostCatalog({ deepseekPricing, chinaVendors, userConfig }) };
+  const catalogRef = { current: buildCostCatalog({ deepseekPricing, curatedVendors, userConfig }) };
 
   ctx.sessionProjections.register(createCostProjectionDefinition(catalogRef));
 
   if (userConfig.refresh !== false) {
-    startPriceRefresh(ctx, { userConfig, catalogRef, cacheFile, chinaVendors, deepseekConfig });
+    startPriceRefresh(ctx, { userConfig, catalogRef, cacheFile, curatedVendors, deepseekConfig });
   }
 }
 //#endregion

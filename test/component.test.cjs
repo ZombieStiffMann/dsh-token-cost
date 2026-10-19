@@ -4,7 +4,7 @@
 // stub (no DOM renderer), then exercises the states the pill and its breakdown
 // dialog must handle: normal cost, missing projection, zero usage,
 // unpriced-only, mixed unpriced, malformed view, currency totals, the
-// per-model tab strip (aggregate tab, model tabs, keyboard switching, tab
+// per-model tab strip (one tab per model, keyboard switching, tab clamping,
 // clamping when the models list shrinks), K/M token counts, two-decimal money,
 // dividers, per-model official price links and locale key resolution.
 //
@@ -613,15 +613,19 @@ for (const locale of ['zh', 'en']) {
 // ---- 4) pill/dialog hidden on missing or malformed views ------------------
 check(render(undefined) === null, 'missing projection must render null');
 check(render(null) === null, 'null projection must render null');
+// A legacy (pre-tab) single-currency view is upgraded in place rather than
+// hidden, so a tab that stayed open across an upgrade keeps its pill.
+const legacyView = render({
+  currency: { code: 'CNY', symbol: '¥' },
+  micro: 1472358,
+  tokens: BASE_TOKENS,
+  tokensTotal: BASE_TOTAL,
+  models: [],
+});
+check(legacyView !== null, 'legacy single-currency view must be upgraded, not hidden');
 check(
-  render({
-    currency: { code: 'CNY', symbol: '¥' },
-    micro: 1472358,
-    tokens: BASE_TOKENS,
-    tokensTotal: BASE_TOTAL,
-    models: [],
-  }) === null,
-  'the pre-tab single-currency view shape is malformed and must render null',
+  legacyView !== null && findText(legacyView).includes('¥1.47'),
+  'legacy single-currency view must render its amount after upgrading',
 );
 check(render({ currencies: 'CNY' }) === null, 'non-array currencies must render null');
 check(render({ currencies: [null, {}] }) === null, 'currencies without a code must not render');
@@ -640,7 +644,7 @@ check(
 const tolerant = render(makeView({ models: [null, 42, makeModel()] }), { locale: 'zh' });
 check(tolerant !== null && tolerant !== undefined, 'malformed model entries must be skipped, not crash the pill');
 
-// ---- 5) dialog: aggregate tab, both locales ------------------------------
+// ---- 5) dialog: one tab per model, DeepSeek dimensions, both locales ------
 for (const locale of ['zh', 'en']) {
   const element = openDialog(makeView(), locale);
   const portal = findPortal(element);
@@ -663,13 +667,12 @@ for (const locale of ['zh', 'en']) {
     locale + ': tablist needs a localized aria-label, got ' + tablist.props['aria-label'],
   );
 
+  // No aggregate tab: the session total lives in the title, details are per model.
   const tabs = tabsOf(element);
-  check(tabs.length === 2, locale + ': expected 全部 + one model tab, got ' + tabs.length);
-  check(findText(tabs[0]) === (locale === 'zh' ? '全部' : 'All'), locale + ': first tab must be the aggregate tab, got ' + JSON.stringify(findText(tabs[0])));
-  check(tabs[0].props['aria-selected'] === true, locale + ': the aggregate tab must be selected initially');
-  check(tabs[1].props['aria-selected'] === false, locale + ': model tab must not be selected initially');
-  check(findText(tabs[1]).includes('DeepSeek-V4.1-Flash'), locale + ': model tab must show the short model name');
-  check(findText(tabs[1]).includes('¥1.47'), locale + ': priced model tab must append its cost, got ' + JSON.stringify(findText(tabs[1])));
+  check(tabs.length === 1, locale + ': one model must produce exactly one tab, got ' + tabs.length);
+  check(tabs[0].props['aria-selected'] === true, locale + ': the only model tab must be selected initially');
+  check(findText(tabs[0]).includes('DeepSeek-V4.1-Flash'), locale + ': tab must show the model name, got ' + JSON.stringify(findText(tabs[0])));
+  check(findText(tabs[0]).includes('¥1.47'), locale + ': priced tab must append its cost, got ' + JSON.stringify(findText(tabs[0])));
 
   const tokenRows = collectRows(element, 'data-token-cost-tokens');
   const expectedRows =
@@ -680,27 +683,36 @@ for (const locale of ['zh', 'en']) {
   for (const label of expectedBands) check(bandRows.includes(label), locale + ': missing band row ' + label + ' in ' + JSON.stringify(bandRows));
 
   const text = findText(element);
-  // K/M token magnitudes in the aggregate token rows and the total.
   check(/274K/.test(text), locale + ': expected 274K input tokens, got ' + JSON.stringify(text));
   check(/31M/.test(text), locale + ': expected 31M cache-read tokens, got ' + JSON.stringify(text));
   check(/144\.4K/.test(text), locale + ': expected 144.4K output tokens, got ' + JSON.stringify(text));
   check(/31\.5M/.test(text), locale + ': expected 31.5M total tokens, got ' + JSON.stringify(text));
-  // Money rounded to two decimals: ¥0.27 / ¥0.62 / ¥0.58 / ¥1.47.
   for (const amount of ['¥0.27', '¥0.62', '¥0.58', '¥1.47']) {
     check(text.includes(amount), locale + ': expected two-decimal amount ' + amount + ' in ' + JSON.stringify(text));
   }
-  // Removed content must not come back.
-  for (const removed of ['差额', '估算', '每百万', '价格依据', '节省']) {
+  for (const removed of ['全部', '差额', '估算', '每百万', '价格依据', '节省']) {
     check(!text.includes(removed), locale + ': removed content reappeared: ' + removed);
   }
-  // Locale isolation: nothing from the other dictionary.
   if (locale === 'zh') check(!text.includes('Uncached'), 'zh dialog leaked English dictionary text');
-  else check(!text.includes('未定价') && !text.includes('全部'), 'en dialog leaked Chinese dictionary text');
-  check(countDividers(element) >= 3, locale + ': expected section dividers, got ' + countDividers(element));
-  // Aggregate tab has no global footer / price link; links are per model.
-  const aggregatePanel = tabpanelOf(element);
-  check(aggregatePanel !== undefined, locale + ': dialog must render a tabpanel');
-  if (aggregatePanel !== undefined) check(anchorsOf(aggregatePanel).length === 0, locale + ': aggregate tab must not render a price link');
+  else check(!text.includes('未定价') && !text.includes('全部') && !text.includes('高峰'), 'en dialog leaked Chinese dictionary text');
+  check(countDividers(element) >= 2, locale + ': expected section dividers, got ' + countDividers(element));
+
+  // DeepSeek has time bands, so the tab shows them and no "flat price" note.
+  check(
+    findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-flat'] === true) === undefined,
+    locale + ': banded model must not render the flat-price note',
+  );
+  const panel = tabpanelOf(element);
+  check(panel !== undefined, locale + ': dialog must render a tabpanel');
+  if (panel !== undefined) {
+    const link = findNode(panel, (node) => node.type === 'a');
+    check(link !== undefined && link.props.href === SOURCE, locale + ': model tab must link its official price page');
+    check(findText(panel).includes(locale === 'zh' ? '官方价格' : 'Official pricing'), locale + ': link needs its localized label');
+    check(
+      findText(panel).includes(locale === 'zh' ? '数据日期 2026-10-19' : 'Data as of 2026-10-19'),
+      locale + ': link row must disclose the price data date, got ' + JSON.stringify(findText(panel)),
+    );
+  }
 }
 
 // ---- 6) dialog: cache-write row only when it has tokens -------------------
@@ -713,63 +725,87 @@ for (const locale of ['zh', 'en']) {
   check(text.includes('¥1.50'), locale + ': cache-write total must be two-decimal, got ' + JSON.stringify(text));
 }
 
-// ---- 7) dialog: switching to a model tab shows its rows, bands and link ---
+// ---- 7) dialog: switching between models keeps each model's own dimensions -
+/** One banded DeepSeek model plus one flat-price vendor model. */
+function makeTwoModelView() {
+  const glmTokens = { input: 100000, cacheRead: 200000, cacheWrite: 0, output: 50000, reasoning: 0 };
+  const glmMicros = { input: 400000, cacheRead: 160000, cacheWrite: 0, output: 480000 };
+  return makeView({
+    models: [
+      makeModel(),
+      makeModel({
+        key: 'zai\u0000glm-4.6',
+        provider: 'zai',
+        model: 'glm-4.6',
+        name: 'GLM-4.6',
+        vendor: 'zhipu',
+        vendorName: '智谱 AI',
+        micro: 1040000,
+        tokens: glmTokens,
+        tokensTotal: 350000,
+        micros: glmMicros,
+        peakMicro: null,
+        offPeakMicro: null,
+        source: 'https://docs.bigmodel.cn/cn/guide/start/pricing',
+      }),
+    ],
+  });
+}
+
 for (const locale of ['zh', 'en']) {
-  const element = openDialog(makeView(), locale);
+  const element = openDialog(makeTwoModelView(), locale);
   const initialTabs = tabsOf(element);
-  if (initialTabs.length < 2) {
-    check(false, locale + ': model tab missing for switching test');
-    continue;
-  }
+  check(initialTabs.length === 2, locale + ': two models must produce two tabs, got ' + initialTabs.length);
+  if (initialTabs.length < 2) continue;
+  check(initialTabs[0].props['aria-selected'] === true, locale + ': first model tab must be selected initially');
+  check(initialTabs[1].props['aria-selected'] === false, locale + ': second model tab must not be selected initially');
+  check(findText(initialTabs[0]).includes('¥1.47'), locale + ': DeepSeek tab must append its cost');
+  check(findText(initialTabs[1]).includes('GLM-4.6') && findText(initialTabs[1]).includes('¥1.04'), locale + ': flat model tab needs name + cost');
+
   initialTabs[1].props.onClick();
   const tabs = tabsOf(element);
   check(tabs[1].props['aria-selected'] === true, locale + ': clicking a model tab must select it');
-  check(tabs[0].props['aria-selected'] === false, locale + ': clicking a model tab must deselect the aggregate tab');
+  check(tabs[0].props['aria-selected'] === false, locale + ': the other tab must be deselected');
 
   const panel = tabpanelOf(element);
-  check(panel !== undefined, locale + ': model tab must render a tabpanel');
+  check(panel !== undefined, locale + ': selected model tab must render a tabpanel');
   if (panel === undefined) continue;
   const panelText = findText(panel);
-  check(panelText.includes('deepseek-official'), locale + ': model tab needs its provider line, got ' + JSON.stringify(panelText));
-  check(panelText.includes('DeepSeek'), locale + ': model tab needs its vendor line');
-  check(/274K/.test(panelText) && /31M/.test(panelText) && /144\.4K/.test(panelText) && /31\.5M/.test(panelText), locale + ': model tab token rows must use K/M');
-  for (const amount of ['¥0.27', '¥0.62', '¥0.58', '¥1.47']) {
-    check(panelText.includes(amount), locale + ': model tab missing two-decimal amount ' + amount + ' in ' + JSON.stringify(panelText));
+  check(panelText.includes('zai') && panelText.includes('智谱 AI'), locale + ': flat model tab needs provider/vendor meta, got ' + JSON.stringify(panelText));
+  check(/100K/.test(panelText) && /200K/.test(panelText) && /50K/.test(panelText) && /350K/.test(panelText), locale + ': flat model token rows must use K/M');
+  for (const amount of ['¥0.40', '¥0.16', '¥0.48']) {
+    check(panelText.includes(amount), locale + ': flat model tab missing two-decimal amount ' + amount + ' in ' + JSON.stringify(panelText));
   }
-  const modelBandRows = collectRows(element, 'data-token-cost-bands');
-  check(modelBandRows.includes(locale === 'zh' ? '高峰时段费用' : 'Peak-band cost'), locale + ': model tab must show non-null peak band');
-  check(modelBandRows.includes(locale === 'zh' ? '空闲时段费用' : 'Off-peak cost'), locale + ': model tab must show non-null off-peak band');
+  // A flat-price vendor has no time bands: no band rows, and the tab says so.
+  check(collectRows(element, 'data-token-cost-bands').length === 0, locale + ': flat model must not render peak/off-peak rows');
   check(
-    findNode(panel, (node) => node.props !== undefined && node.props['data-token-cost-model-meta'] === true) !== undefined,
-    locale + ': model tab must render the provider/vendor meta line',
+    findNode(panel, (node) => node.props !== undefined && node.props['data-token-cost-flat'] === true) !== undefined,
+    locale + ': flat model tab must explain that it has no peak/off-peak bands',
   );
+  check(
+    panelText.includes(locale === 'zh' ? '该模型按厂商统一单价计费' : 'No peak/off-peak bands'),
+    locale + ': flat-price note must be localized, got ' + JSON.stringify(panelText),
+  );
+  const flatLink = findNode(panel, (node) => node.type === 'a');
+  check(flatLink !== undefined && flatLink.props.href === 'https://docs.bigmodel.cn/cn/guide/start/pricing', locale + ': flat model must link its own official page');
 
-  const link = findNode(panel, (node) => node.type === 'a');
-  check(link !== undefined, locale + ': model tab is missing the official price link');
-  if (link !== undefined) {
-    check(link.props.href === SOURCE, locale + ': link must point at that model source, got ' + link.props.href);
-    check(link.props.target === '_blank', locale + ': link must open a new tab');
-    check(typeof link.props.rel === 'string' && link.props.rel.includes('noopener') && link.props.rel.includes('noreferrer'), locale + ': link rel must be safe');
-    check(findText(link) === SOURCE, locale + ': link must show the visible URL, got ' + JSON.stringify(findText(link)));
-  }
-  check(findText(panel).includes(locale === 'zh' ? '官方价格' : 'Official pricing'), locale + ': link needs its localized label');
-
-  // Back to the aggregate tab: the model-only content must disappear.
   tabsOf(element)[0].props.onClick();
-  const backPanel = tabpanelOf(element);
-  check(backPanel !== undefined, locale + ': returning to the aggregate tab must render a panel');
-  if (backPanel !== undefined) {
+  const deepseekPanel = tabpanelOf(element);
+  check(deepseekPanel !== undefined, locale + ': switching back must render the DeepSeek panel');
+  if (deepseekPanel !== undefined) {
+    check(collectRows(element, 'data-token-cost-bands').length === 2, locale + ': DeepSeek tab must show peak + off-peak rows');
     check(
-      findNode(backPanel, (node) => node.props !== undefined && node.props['data-token-cost-model-meta'] === true) === undefined,
-      locale + ': aggregate tab must not render model meta',
+      findNode(deepseekPanel, (node) => node.props !== undefined && node.props['data-token-cost-flat'] === true) === undefined,
+      locale + ': DeepSeek tab must not render the flat-price note',
     );
-    check(anchorsOf(backPanel).length === 0, locale + ': aggregate tab must not render the model price link');
+    const deepseekLink = findNode(deepseekPanel, (node) => node.type === 'a');
+    check(deepseekLink !== undefined && deepseekLink.props.href === SOURCE, locale + ': DeepSeek tab must link its own page');
   }
 }
 
 // ---- 8) dialog: keyboard Left/Right/Home/End on the tablist --------------
 {
-  const element = openDialog(makeView(), 'zh');
+  const element = openDialog(makeTwoModelView(), 'zh');
   const press = (key) => tablistOf(element).props.onKeyDown({ key, preventDefault() {} });
   press('ArrowRight');
   check(tabsOf(element)[1].props['aria-selected'] === true, 'ArrowRight must select the next tab');
@@ -787,12 +823,12 @@ for (const locale of ['zh', 'en']) {
 for (const locale of ['zh', 'en']) {
   const element = openDialog(makeMixedView(), locale);
   const tabs = tabsOf(element);
-  check(tabs.length === 3, locale + ': mixed view must have aggregate + two model tabs, got ' + tabs.length);
-  if (tabs.length < 3) continue;
-  const unpricedLabel = findText(tabs[2]);
+  check(tabs.length === 2, locale + ': mixed view must have one tab per model, got ' + tabs.length);
+  if (tabs.length < 2) continue;
+  const unpricedLabel = findText(tabs[1]);
   check(unpricedLabel.includes('MiMo-V2.6-Pro'), locale + ': unpriced model tab must show its name, got ' + JSON.stringify(unpricedLabel));
   check(!unpricedLabel.includes('¥'), locale + ': unpriced model tab must not append a cost, got ' + JSON.stringify(unpricedLabel));
-  tabs[2].props.onClick();
+  tabs[1].props.onClick();
   const panel = tabpanelOf(element);
   if (panel === undefined) {
     check(false, locale + ': unpriced model tab must render a panel');
@@ -807,62 +843,87 @@ for (const locale of ['zh', 'en']) {
     locale + ': unpriced model tab needs the unpriced marker',
   );
   check(anchorsOf(panel).length === 0, locale + ': unpriced model tab must not render a price link');
+  check(
+    findNode(panel, (node) => node.props !== undefined && node.props['data-token-cost-flat'] === true) === undefined,
+    locale + ': unpriced model must not render the flat-price note',
+  );
 }
 
-// Unpriced-only dialog: aggregate renders tokens, title says unpriced, no bands/link.
+// Unpriced-only dialog: its one model tab renders tokens, no bands/link.
 for (const locale of ['zh', 'en']) {
   const element = openDialog(makeUnpricedView(), locale);
   const text = findText(element);
   check(text.includes(locale === 'zh' ? '未定价' : 'Unpriced'), locale + ': unpriced-only dialog title must say unpriced');
+  const tabs = tabsOf(element);
+  check(tabs.length === 1, locale + ': unpriced-only view must have a single model tab, got ' + tabs.length);
+  if (tabs.length === 1) check(tabs[0].props['aria-selected'] === true, locale + ': unpriced model tab must be selected');
   check(collectRows(element, 'data-token-cost-tokens').length > 0, locale + ': unpriced-only dialog must still render token rows');
   check(collectRows(element, 'data-token-cost-bands').length === 0, locale + ': unpriced-only dialog has no band data to show');
   check(anchorsOf(element).length === 0, locale + ': unpriced-only dialog must not render a price link');
 }
 
-// ---- 10) dialog: multiple currencies per-currency rows and tabs ----------
+// ---- 10) dialog: each currency model keeps its own symbol and dimensions --
 {
   const element = openDialog(makeMultiCurrencyView(), 'zh');
   const text = findText(element);
   check(text.includes('¥2.32') && text.includes('$0.14'), 'multi-currency dialog title must show every currency total');
   check(text.includes('¥2.32 · $0.14'), 'multi-currency dialog total must join amounts, got ' + JSON.stringify(text));
   const tabs = tabsOf(element);
-  check(tabs.length === 3, 'multi-currency dialog must have one tab per model, got ' + tabs.length);
-  if (tabs.length === 3) {
-    check(findText(tabs[1]).includes('¥2.32'), 'CNY model tab must append its CNY amount');
-    check(findText(tabs[2]).includes('$0.14'), 'USD model tab must append its USD amount');
+  check(tabs.length === 2, 'multi-currency dialog must have one tab per model, got ' + tabs.length);
+  if (tabs.length === 2) {
+    check(findText(tabs[0]).includes('¥2.32'), 'CNY model tab must append its CNY amount');
+    check(findText(tabs[1]).includes('$0.14'), 'USD model tab must append its USD amount');
   }
-  const bandRows = collectRows(element, 'data-token-cost-bands');
-  check(bandRows.length === 4, 'aggregate must show peak/off-peak per currency, got ' + JSON.stringify(bandRows));
-  check(bandRows.includes('高峰时段费用 (CNY)') && bandRows.includes('高峰时段费用 (USD)'), 'multi-currency band rows must name their currency, got ' + JSON.stringify(bandRows));
-  check(bandRows.includes('空闲时段费用 (CNY)') && bandRows.includes('空闲时段费用 (USD)'), 'multi-currency off-peak rows must name their currency');
-  const aggregateText = findText(tabpanelOf(element));
-  check(aggregateText.includes('CNY ¥1.20') && aggregateText.includes('USD $0.09'), 'aggregate bucket rows must show each currency cost, got ' + JSON.stringify(aggregateText));
 
-  tabsOf(element)[2].props.onClick();
+  // The selected CNY model tab shows CNY costs and its own band rows.
+  const cnyPanel = tabpanelOf(element);
+  check(cnyPanel !== undefined, 'CNY model tab must render a panel');
+  if (cnyPanel !== undefined) {
+    const cnyText = findText(cnyPanel);
+    check(cnyText.includes('¥1.20') && cnyText.includes('¥0.22') && cnyText.includes('¥0.90'), 'CNY model tab must show CNY bucket costs, got ' + JSON.stringify(cnyText));
+    check(!cnyText.includes('$'), 'CNY model tab must not mix in the USD symbol');
+    const cnyBands = collectRows(element, 'data-token-cost-bands');
+    check(cnyBands.length === 2 && cnyBands.includes('高峰时段费用') && cnyBands.includes('空闲时段费用'), 'CNY model tab must show its band rows, got ' + JSON.stringify(cnyBands));
+    const cnyLink = findNode(cnyPanel, (node) => node.type === 'a');
+    check(cnyLink !== undefined && cnyLink.props.href === 'https://example.test/cny-pricing', 'CNY model tab must link its own source');
+  }
+
+  tabsOf(element)[1].props.onClick();
   const panel = tabpanelOf(element);
   check(panel !== undefined, 'USD model tab must render a panel');
   if (panel !== undefined) {
     const panelText = findText(panel);
     check(panelText.includes('$0.09') && panelText.includes('$0.05'), 'USD model tab must use its own currency symbol, got ' + JSON.stringify(panelText));
     check(!panelText.includes('¥'), 'USD model tab must not mix in the CNY symbol');
+    const usdBands = collectRows(element, 'data-token-cost-bands');
+    check(usdBands.length === 2, 'USD model tab must show its own band rows, got ' + JSON.stringify(usdBands));
     const link = findNode(panel, (node) => node.type === 'a');
     check(link !== undefined && link.props.href === 'https://example.test/usd-pricing', 'USD model tab must link its own source');
   }
 }
 
 // ---- 11) dialog: bands only when reported, link only when present --------
-{
-  const plain = openDialog(makeView({ models: [makeModel({ peakMicro: null, offPeakMicro: null, source: null })] }), 'zh');
-  tabsOf(plain)[1].props.onClick();
+for (const locale of ['zh', 'en']) {
+  const plain = openDialog(makeView({ models: [makeModel({ peakMicro: null, offPeakMicro: null, source: null })] }), locale);
   const plainPanel = tabpanelOf(plain);
-  check(collectRows(plain, 'data-token-cost-bands').length === 0, 'null model peak/off-peak must not render band rows');
-  check(anchorsOf(plainPanel).length === 0, 'priced model without a source must not render a link');
-  check(findText(plainPanel).includes('¥0.27'), 'model costs must still render without a source');
-
+  check(plainPanel !== undefined, locale + ': flat model tab must render a panel');
+  if (plainPanel === undefined) continue;
+  check(collectRows(plain, 'data-token-cost-bands').length === 0, locale + ': null model peak/off-peak must not render band rows');
+  check(anchorsOf(plainPanel).length === 0, locale + ': priced model without a source must not render a link');
+  check(findText(plainPanel).includes('¥0.27'), locale + ': model costs must still render without a source');
+  check(
+    findNode(plainPanel, (node) => node.props !== undefined && node.props['data-token-cost-flat'] === true) !== undefined,
+    locale + ': flat model without bands must render the flat-price note',
+  );
+}
+{
   const partial = openDialog(makeView({ models: [makeModel({ peakMicro: null, offPeakMicro: 0 })] }), 'zh');
-  tabsOf(partial)[1].props.onClick();
   const partialBands = collectRows(partial, 'data-token-cost-bands');
   check(partialBands.length === 1 && partialBands[0] === '空闲时段费用', 'only the non-null band row must render, got ' + JSON.stringify(partialBands));
+  check(
+    findNode(partial, (node) => node.props !== undefined && node.props['data-token-cost-flat'] === true) === undefined,
+    'a model with any reported band must not render the flat-price note',
+  );
 }
 
 // ---- 12) dialog: tab index clamps when the models list shrinks -----------
@@ -876,17 +937,17 @@ for (const locale of ['zh', 'en']) {
   });
   const element = openDialog(trioView, 'zh');
   const tabs = tabsOf(element);
-  check(tabs.length === 4, 'three-model view needs aggregate + three model tabs, got ' + tabs.length);
-  if (tabs.length === 4) {
-    tabs[3].props.onClick();
-    check(tabsOf(element)[3].props['aria-selected'] === true, 'last model tab must be selectable');
+  check(tabs.length === 3, 'three-model view needs three model tabs, got ' + tabs.length);
+  if (tabs.length === 3) {
+    tabs[2].props.onClick();
+    check(tabsOf(element)[2].props['aria-selected'] === true, 'last model tab must be selectable');
   }
   // Re-render the same dialog with fewer models while the third tab is
-  // selected: the index must clamp to the last available tab, never throw.
+  // selected: the index must clamp to the only remaining tab, never throw.
   const shrunk = render(makeView(), { open: true, locale: 'zh', resetHooks: false });
   const shrunkTabs = tabsOf(shrunk);
-  check(shrunkTabs.length === 2, 'shrunk view must rebuild the tab strip, got ' + shrunkTabs.length);
-  check(shrunkTabs[1].props['aria-selected'] === true, 'stale tab index must clamp to the last available tab');
+  check(shrunkTabs.length === 1, 'shrunk view must rebuild the tab strip, got ' + shrunkTabs.length);
+  check(shrunkTabs[0].props['aria-selected'] === true, 'stale tab index must clamp to the remaining tab');
   check(tabpanelOf(shrunk) !== undefined, 'clamped tab must render a panel');
   check(findText(tabpanelOf(shrunk)).includes('¥1.47'), 'clamped model tab must render the new model content');
 }
@@ -918,7 +979,7 @@ console.log(
       localeKeys: { zh: zhKeys.length, en: enKeys.length },
       pillText: findText(reportPill),
       tabs: tabsOf(reportDialog).map((tab) => findText(tab)),
-      aggregateRows: collectRows(reportDialog, 'data-token-cost-tokens'),
+      modelRows: collectRows(reportDialog, 'data-token-cost-tokens'),
       bandRows: collectRows(reportDialog, 'data-token-cost-bands'),
     },
     null,

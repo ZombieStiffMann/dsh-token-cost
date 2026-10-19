@@ -6,24 +6,25 @@
 A [DeepSeek Harness](https://deepseek-harness.github.io/deepseek-harness/) plugin
 that shows **how much the current session has cost so far**, right next to the
 built-in token-usage pill below the composer. It prices every provider-reported
-usage sample with the official rate of the model that produced it — **11 vendors**
-(DeepSeek, Qwen, GLM, Kimi, Doubao, Hunyuan, ERNIE, MiniMax, StepFun, SenseNova,
-Xiaomi MiMo) — and splits the breakdown per model in a tabbed dialog.
+usage sample with the official rate of the model that produced it — **17 vendors**
+in CNY and USD (DeepSeek, Qwen, GLM, Kimi, Doubao, Hunyuan, ERNIE, MiniMax,
+StepFun, SenseNova, Xiaomi MiMo, OpenAI, Anthropic, Google Gemini, xAI, Mistral,
+Cohere) — and splits the breakdown per model in a tabbed dialog.
 
 > Unofficial third-party plugin. Not affiliated with or endorsed by any vendor.
 > Cost figures are estimates; the official bill remains authoritative.
 
 ## Preview
 
-The pill sits after the shipped activity/usage pills. Click it for the breakdown,
-then switch tabs to see how much each model consumed:
+The pill sits after the shipped activity/usage pills. Click it and each model has
+its own tab — a tab only shows the billing dimensions that model actually has:
 
 <!-- A screenshot of the tabbed dialog is welcome here (docs/preview.png). -->
 
 ```text
 Token 费用                              ¥2.32
 ──────────────────────────────────────────────
-[ 全部 ] [ DeepSeek-V4.1-Flash ¥1.97 ] [ MiMo-V2.6-Pro ¥0.35 ]
+[ DeepSeek-V4.1-Flash ¥1.97 ] [ MiMo-V2.6-Pro ¥0.35 ]
 ──────────────────────────────────────────────
 未命中缓存输入       288.3K        ¥0.29
 缓存命中输入          44.2M        ¥0.88
@@ -34,12 +35,24 @@ Token 合计            44.7M
 空闲时段费用                        ¥1.97
 ```
 
+The DeepSeek tab above shows cache-hit/miss buckets *plus* peak/off-peak time
+bands, because DeepSeek bills by time of day. A flat-price vendor (MiMo, Qwen,
+GLM, Kimi, ...) has a different tab that shows cache-hit/miss input and output
+only, with a short note that the vendor has no peak/off-peak bands. Every tab
+also discloses the price data date next to its official price link, so you can
+tell how fresh the number is.
+
+International models are billed in USD: their tabs show `$` amounts, and a mixed
+session shows both currencies side by side (`¥2.32 · $0.14`) without ever adding
+or converting them.
+
 ## Supported vendors
 
-Prices are curated from each vendor's own official CNY price page (read
-2026-10-19); the DeepSeek catalog additionally refreshes itself from the official
-page in the background. Each vendor's source URL and the data read date are in
-the table below and in `catalog/china/notes/`.
+Prices are curated from each vendor's own official price page and refreshed with
+releases — the DeepSeek catalog is the only one that also refreshes itself from
+the official page in the background. Each vendor's source URL and read date are
+in `catalog/china/notes/` and `catalog/world/notes/`. Chinese vendors are quoted
+and billed in CNY:
 
 | Vendor | Suggested DSH provider ids | Models | Official price source |
 |---|---|---|---|
@@ -55,10 +68,27 @@ the table below and in `catalog/china/notes/`.
 | 商汤日日新 SenseNova | `sensenova` | 8 | <https://console.sensecore.cn/micro/help/docs/model-as-a-service/nova/pricing/> |
 | 小米 MiMo | `xiaomi` | 3 | <https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go> |
 
-Provider ids are hints: a model is matched by its wire id first, then aliases,
+International vendors are quoted and billed in USD (read 2026-10-20):
+
+| Vendor | Suggested DSH provider ids | Models | Official price source |
+|---|---|---|---|
+| OpenAI | `openai` (also `azure`) | 19 | <https://developers.openai.com/api/docs/pricing> |
+| Anthropic (Claude) | `anthropic` | 15 | <https://platform.claude.com/docs/en/about-claude/pricing> |
+| Google Gemini | `google`, `google-vertex` | 10 | <https://ai.google.dev/gemini-api/docs/pricing> |
+| xAI (Grok) | `xai` | 8 | <https://docs.x.ai/developers/pricing> |
+| Mistral AI | `mistral` | 8 | <https://docs.mistral.ai/inference/pricing.md> |
+| Cohere | `cohere` (hand-declared route) | 6 | <https://cohere.com/pricing> |
+
+Provider ids are hints: a model is matched by its wire id first, then aliases
+(including the ids DSH's pi-ai catalog actually ships, e.g. `mistral-medium-3.5`),
 then documented snapshot prefixes, so any user-chosen pi-ai provider name still
 matches its model. Models that are not in any catalog are shown as `未定价`
 instead of being counted as free.
+
+To use a foreign vendor you still need a route for it in your pi-ai config (the
+`providers` entry in the profile patch with an API key); the plugin only prices
+models that actually produce usage. See `catalog/world/notes/provider-map.md` for
+the provider ids this DSH build ships and their model ids.
 
 ## How the cost is calculated
 
@@ -74,12 +104,14 @@ cost = Σ tokens_in_bucket × official_rate(bucket) × band_multiplier(timestamp
   the cache-miss rate.
 - **DeepSeek** applies its official peak/off-peak time bands: peak on Beijing
   time (UTC+8) Monday–Friday 09:00–12:00 and 14:00–18:00 excluding Chinese
-  statutory holidays, off-peak at 50% of peak otherwise. `catalog/china/` vendors
-  are flat-priced unless their data adds a `billing` block.
+  statutory holidays, off-peak at 50% of peak otherwise. Vendors in
+  `catalog/china/` and `catalog/world/` are flat-priced unless their data adds a
+  `billing` block.
 - Context-length tiered models use the tier that contains the request's prompt
-  size.
+  size (used by OpenAI long-context, xAI long-context, Gemini long-context,
+  Claude Haiku 5.5 and some Chinese vendors).
 - Currencies are never summed across each other: a session that uses both CNY and
-  USD models shows `¥1.23 · $0.45`, and the dialog lists totals per currency.
+  USD models shows `¥1.23 · $0.45`, and each model tab keeps its own currency.
 - Samples are folded with the same replacement/retry rules as the shipped
   `tokenUsage` projection, so token totals match the built-in usage pill.
 
@@ -90,10 +122,15 @@ cost = Σ tokens_in_bucket × official_rate(bucket) × band_multiplier(timestamp
   swaps the catalog for usage that happens afterwards. A network or layout
   failure keeps the previous catalog; a parsed ratio/window change is picked up
   when recognizable.
-- **Other vendors** are curated JSON-like data files under `catalog/china/`. They
-  are updated in this repository (see [Adding or updating a vendor](#adding-or-updating-a-vendor)),
-  not fetched at runtime — so a price field can never be silently injected by a
-  third-party page.
+- **Other vendors** are curated data files under `catalog/china/` (CNY) and
+  `catalog/world/` (USD). They are updated in this repository (see
+  [Adding or updating a vendor](#adding-or-updating-a-vendor)), not fetched at
+  runtime — so a price field can never be silently injected by a third-party
+  page.
+- Curated prices carry a read date. A few are promotional and will change (OpenAI
+  GPT-5.6 Sol through at least 2026-11-21; Gemini 4 Argon through 2026-11-30;
+  Gemini 3.8/3.6 Flash through 2026-12-31; Mistral Large 4 Public Preview). Each
+  vendor note records the regular price and the change date.
 - Already-counted tokens keep the cost they were charged at their own time; a
   refresh or a new release only changes later samples.
 - No session content, token text, or identifiers are sent anywhere. The only
@@ -112,7 +149,7 @@ plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost
 Pin a release:
 
 ```text
-plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost#v0.2.0
+plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost#v0.3.0
 ```
 
 For local development, point the manager at a checkout instead:
@@ -151,6 +188,11 @@ prices.
         rates: { cacheMiss: 10, cacheHit: 1, output: 20 }
         currency: { code: CNY, symbol: '¥' }
         source: 'https://example.com/pricing'
+      my-usd-model:
+        name: My USD Model
+        rates: { cacheMiss: 3, cacheHit: 0.3, output: 15 }
+        currency: { code: USD, symbol: '$' }
+        source: 'https://example.com/usd-pricing'
 
     # Global id aliases (wire id -> catalog model id) and a fallback price
     aliases: { my-alias: glm-4.6 }
@@ -170,13 +212,16 @@ future dates with `additionalHolidays` once announced.
 
 The catalog is plain data, one file per vendor:
 
-1. Copy `catalog/china/_template.js` to `catalog/china/<vendor>.js` and fill in
-   `vendor`, display names, official `source` URL, `asOf`, `providers`, and the
-   models with their CNY rates. Read `catalog/china/SCHEMA.md` first.
-2. Add `catalog/china/notes/<vendor>.md` with the source URLs, read date, what
-   was included/excluded and why.
-3. Run `npm run validate:catalog` and `npm test`. The validator rejects malformed
-   rates, dates, windows, duplicate ids and the rates/tiers conflict.
+1. Copy `catalog/china/_template.js` to `catalog/china/<vendor>.js` (CNY) or to
+   `catalog/world/<vendor>.js` (USD) and fill in `vendor`, display names, the
+   official `source` URL, `asOf`, `providers`, and the models with their rates.
+   Read `catalog/china/SCHEMA.md` and `catalog/world/SCHEMA.md` first; the
+   directory decides the currency (`china/` = CNY/¥, `world/` = USD/$).
+2. Add `catalog/china/notes/<vendor>.md` or `catalog/world/notes/<vendor>.md`
+   with the source URLs, read date, what was included/excluded and why.
+3. Run `npm run validate:catalog` and `npm test`. The validator checks both
+   directories, rejects malformed rates, dates, windows, duplicate ids, a
+   rates/tiers conflict and a wrong currency for the directory.
 4. Open a PR. Never guess a price: leave a model out (it then shows `未定价`)
    rather than publishing an unverified number.
 
@@ -187,11 +232,12 @@ The catalog is plain data, one file per vendor:
 | `index.js` | Host half: `tokenCost` projection, per-sample pricing, DeepSeek refresh/cache |
 | `pricing.js` | DeepSeek catalog defaults, config normalization, band rules |
 | `cost-catalog.js` | Runtime catalog: curated vendors + DeepSeek + user overrides/aliases/fallback |
-| `catalog/index.js` | Sync loader/normalizer for `catalog/china/*.js` |
+| `catalog/index.js` | Sync loader/normalizer for `catalog/china/*.js` + `catalog/world/*.js` |
 | `catalog/lookup.js` | Provider → model id → alias → prefix matching, tier selection |
-| `catalog/validate.js` | Data-contract validator and loader core |
-| `catalog/china/` | Curated vendor price data + evidence notes per vendor |
-| `client.js` | Client half: cost pill and tabbed breakdown dialog |
+| `catalog/validate.js` | Data-contract validator and loader core (both directories) |
+| `catalog/china/` | Curated CNY vendor price data + evidence notes per vendor |
+| `catalog/world/` | Curated USD vendor price data + evidence notes + provider map |
+| `client.js` | Client half: cost pill and per-model tabbed breakdown dialog |
 | `cordis.patch.yml` | Bundle patch that inserts the Host `token-cost` row |
 | `test/` | Host fold, official-page parser, catalog engine and client render tests |
 
@@ -203,7 +249,7 @@ npm run test:fold        # pricing fold, bands, retries/replacements, multi-curr
 npm run test:parser      # DeepSeek official-page parser against a minimized fixture
 npm run test:catalog     # catalog loader/validator + multi-vendor lookup engine
 npm run test:component   # renders the real client.js in a DOM-less stub
-npm run validate:catalog # data contract check for catalog/china
+npm run validate:catalog # data contract check for catalog/china + catalog/world
 ```
 
 No dependencies, no build step: everything ships as plain ESM/JS.
@@ -219,17 +265,36 @@ No dependencies, no build step: everything ships as plain ESM/JS.
 
 - Estimates only. The official bill remains authoritative, and prices change —
   curated data carries its `asOf` date and is updated by releases.
-- **Batch / off-peak-except-DeepSeek / subscription plans are not modelled.** The
+- **Batch / flex / priority / fast / subscription plans are not modelled.** The
   catalog holds the vendor's standard pay-as-you-go online price (batch calls are
   often 50–60% of it); coding/token plans are subscriptions, and their per-token
   cost is not comparable.
-- **Free models are not representable yet**: a ¥0 model shows as `未定价` rather
-  than `¥0.00`.
+- **Foreign vendors only price what your pi-ai config actually routes.** A vendor
+  with no route/API key produces no usage to price; the catalogue still works for
+  models routed through any provider name (matched by wire id).
+- **Reseller/enterprise routes can differ.** The USD prices are the vendor's own
+  first-party API list; Azure, Amazon Bedrock, Google Vertex, OpenRouter and other
+  gateways may bill different rates, so a model routed through them is priced at
+  the first-party list price. The `azure` provider hint is only a best effort.
+- **Free models are not representable yet**: a ¥0 / $0 model shows as `未定价`
+  rather than `¥0.00`.
 - Some vendors publish two-dimensional prices (input-length × output-length) or
   split thinking/non-thinking output prices; the catalog uses one bracket
   (documented in the vendor note), so edge cases can differ by a constant factor.
 - Some model ids are inferred from a vendor's documented naming pattern; an
   unknown id simply stays `未定价`.
+- **Foreign caching nuances**: Anthropic cache writes use the standard 5-minute
+  TTL price (the 1-hour TTL is 2× input and cannot be represented by one number);
+  Gemini context-cache storage is billed per token-hour and is not modelled; xAI
+  has no cache-write price, so writes bill as normal input. Provider-reported
+  cache-read tokens are priced with the vendor's published cached-input rate.
+- Promotional prices are encoded as currently effective; the vendor note records
+  the regular price and the advertised change date (e.g. Gemini 4 Argon through
+  2026-11-30, OpenAI GPT-5.6 Sol through at least 2026-11-21, Mistral Large 4
+  Public Preview).
+- Dynamic aliases (`chat-latest`, `gemini-flash-latest`, ...) can re-point to a
+  different snapshot at any time; they are either included with a note or left
+  `未定价` instead of guessing.
 - 讯飞星火 is not included yet: its official pages show conflicting live/static
   discounts. See `catalog/china/notes/xunfei.md`; PRs with a verified id + price
   are welcome.
@@ -243,5 +308,6 @@ No dependencies, no build step: everything ships as plain ESM/JS.
 [MIT](LICENSE) © 2026 zombiestiffmann.
 
 DeepSeek, Qwen, GLM, Kimi, Doubao, Hunyuan, ERNIE, MiniMax, StepFun, SenseNova,
-MiMo and related marks belong to their owners. Official price data is reproduced
-only as short facts (rates + source links) to compute estimates.
+MiMo, OpenAI, ChatGPT, Claude, Anthropic, Gemini, Google, Grok, xAI, Mistral,
+Cohere and related marks belong to their owners. Official price data is
+reproduced only as short facts (rates + source links) to compute estimates.

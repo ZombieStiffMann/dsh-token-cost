@@ -26,7 +26,6 @@ window.__ModuleLoader__.load({
       'pill.ariaUnpriced': '部分 token 未定价，点击查看明细',
       'dialog.title': 'Token 费用',
       'tabs.aria': '费用明细视图',
-      'tab.all': '全部',
       'row.input': '未命中缓存输入',
       'row.cacheRead': '缓存命中输入',
       'row.cacheWrite': '缓存写入',
@@ -35,7 +34,9 @@ window.__ModuleLoader__.load({
       'row.unpriced': '未定价',
       'band.peak': '高峰时段费用',
       'band.offPeak': '空闲时段费用',
+      'note.flat': '该模型按厂商统一单价计费（无高峰/空闲时段）',
       'link.official': '官方价格',
+      'link.asOf': '数据日期 {date}',
     };
     const en = {
       'pill.unpriced': 'Unpriced',
@@ -43,7 +44,6 @@ window.__ModuleLoader__.load({
       'pill.ariaUnpriced': 'Some tokens are unpriced. Click for details.',
       'dialog.title': 'Token cost',
       'tabs.aria': 'Cost breakdown views',
-      'tab.all': 'All',
       'row.input': 'Uncached input',
       'row.cacheRead': 'Cache-hit input',
       'row.cacheWrite': 'Cache write',
@@ -52,7 +52,9 @@ window.__ModuleLoader__.load({
       'row.unpriced': 'Unpriced',
       'band.peak': 'Peak-band cost',
       'band.offPeak': 'Off-peak cost',
+      'note.flat': 'No peak/off-peak bands for this model; billed at the vendor flat rate',
       'link.official': 'Official pricing',
+      'link.asOf': 'Data as of {date}',
     };
     //#endregion
 
@@ -99,6 +101,9 @@ window.__ModuleLoader__.load({
       '.' + ROOT_CLASS + '_details dd b{color:var(--dsw-alias-label-primary);font-weight:600}',
       '.' + ROOT_CLASS + '_meta{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin:0 0 6px;overflow-wrap:anywhere}',
       '.' + ROOT_CLASS + '_unpriced{color:var(--dsw-alias-state-warn-primary);font-weight:600;margin:8px 0 0}',
+      '.' + ROOT_CLASS + '_unpriced{color:var(--dsw-alias-state-warn-primary);margin:8px 0 0;font-weight:500}',
+      '.' + ROOT_CLASS + '_flatNote{color:var(--dsw-alias-label-tertiary);margin:8px 0 0;font-size:11px;line-height:16px}',
+      '.' + ROOT_CLASS + '_asOf{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
       '.' + ROOT_CLASS + '_linkRow{display:flex;flex-direction:column;gap:4px}',
       '.' + ROOT_CLASS + '_linkLabel{color:var(--dsw-alias-label-primary);font-weight:600}',
       '.' + ROOT_CLASS + '_link{color:var(--dsw-alias-brand-primary);font-size:12px;line-height:16px;word-break:break-all;text-decoration:none}',
@@ -233,7 +238,43 @@ window.__ModuleLoader__.load({
      * entries are skipped so one bad model can never hide the whole breakdown.
      */
     function normalizeView(value) {
-      if (!isRecord(value) || !Array.isArray(value.currencies)) return null;
+      if (!isRecord(value)) return null;
+      if (!Array.isArray(value.currencies)) {
+        // Legacy single-currency view pushed by the previous Host build (a tab
+        // that stayed open across the upgrade). Upgrade it in place so the pill
+        // keeps rendering until the browser is reloaded.
+        if (typeof value.micro !== 'number') return null;
+        const legacyCurrency = normalizeCurrency({
+          code: isRecord(value.currency) && typeof value.currency.code === 'string' ? value.currency.code : 'CNY',
+          symbol: isRecord(value.currency) && typeof value.currency.symbol === 'string' ? value.currency.symbol : undefined,
+          micro: value.micro,
+          tokens: value.tokens,
+          micros: value.micros,
+          saving: value.saving,
+          peakMicro: value.peakMicro,
+          offPeakMicro: value.offPeakMicro,
+        });
+        if (legacyCurrency === null) return null;
+        const legacyModels = [];
+        if (Array.isArray(value.models)) {
+          for (const entry of value.models) {
+            const model = normalizeModel(entry, { code: legacyCurrency.code, symbol: legacyCurrency.symbol });
+            if (model !== null) legacyModels.push(model);
+          }
+        }
+        const legacyTokens = readTokens(value.tokens);
+        let legacyUnpriced = 0;
+        for (const model of legacyModels) if (!model.priced) legacyUnpriced += model.tokensTotal;
+        return {
+          currencies: [legacyCurrency],
+          models: legacyModels,
+          tokens: legacyTokens,
+          tokensTotal: sumTokens(legacyTokens),
+          unpricedTokens: legacyUnpriced,
+          unpricedModels: [],
+          lastUpdated: null,
+        };
+      }
       const currencies = [];
       for (const entry of value.currencies) {
         const currency = normalizeCurrency(entry);
@@ -324,69 +365,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** First tab: the whole session, with per-currency cost and band rows. */
-    function AggregateDetails(props) {
-      const { view, t } = props;
-      const currencies = usedCurrencies(view);
-      const tokens = view.tokens;
-      const rows = [
-        h(
-          DetailRow,
-          { key: 'input', label: t('row.input') },
-          h('b', null, formatTokens(tokens.input)),
-          costSuffix(currencies, (currency) => currency.micros.input),
-        ),
-        h(
-          DetailRow,
-          { key: 'cacheRead', label: t('row.cacheRead') },
-          h('b', null, formatTokens(tokens.cacheRead)),
-          costSuffix(currencies, (currency) => currency.micros.cacheRead),
-        ),
-      ];
-      if (tokens.cacheWrite > 0) {
-        rows.push(
-          h(
-            DetailRow,
-            { key: 'cacheWrite', label: t('row.cacheWrite') },
-            h('b', null, formatTokens(tokens.cacheWrite)),
-            costSuffix(currencies, (currency) => currency.micros.cacheWrite),
-          ),
-        );
-      }
-      rows.push(
-        h(
-          DetailRow,
-          { key: 'output', label: t('row.output') },
-          h('b', null, formatTokens(tokens.output)),
-          costSuffix(currencies, (currency) => currency.micros.output),
-        ),
-        h(DetailRow, { key: 'total', label: t('row.total') }, h('b', null, formatTokens(view.tokensTotal))),
-      );
-
-      const bandRows = [];
-      currencies.forEach((currency, position) => {
-        const suffix = currencies.length > 1 ? ' (' + currency.code + ')' : '';
-        const symbol = symbolOf(currency);
-        if (currency.peakMicro !== null) {
-          bandRows.push(h(DetailRow, { key: 'peak-' + position, label: t('band.peak') + suffix }, symbol + formatMoney(currency.peakMicro)));
-        }
-        if (currency.offPeakMicro !== null) {
-          bandRows.push(
-            h(DetailRow, { key: 'offPeak-' + position, label: t('band.offPeak') + suffix }, symbol + formatMoney(currency.offPeakMicro)),
-          );
-        }
-      });
-
-      return h(
-        React.Fragment,
-        null,
-        h('dl', { className: ROOT_CLASS + '_details', 'data-token-cost-tokens': true }, rows),
-        bandRows.length === 0 ? null : Divider(),
-        bandRows.length === 0 ? null : h('dl', { className: ROOT_CLASS + '_details', 'data-token-cost-bands': true }, bandRows),
-      );
-    }
-
-    /** One model tab: its own token rows, bands (only when reported) and source link. */
+    /** One model tab: only the billing dimensions that model actually has. */
     function ModelDetails(props) {
       const { model, t } = props;
       const tokens = model.tokens;
@@ -437,6 +416,13 @@ window.__ModuleLoader__.load({
                 },
                 model.source,
               ),
+              model.asOf === null
+                ? null
+                : h(
+                    'span',
+                    { className: ROOT_CLASS + '_asOf', 'data-token-cost-asof': true },
+                    t('link.asOf', { date: model.asOf }),
+                  ),
             )
           : null;
 
@@ -446,6 +432,7 @@ window.__ModuleLoader__.load({
         meta === '' ? null : h('div', { className: ROOT_CLASS + '_meta', 'data-token-cost-model-meta': true }, meta),
         h('dl', { className: ROOT_CLASS + '_details', 'data-token-cost-tokens': true }, rows),
         model.priced ? null : h('div', { className: ROOT_CLASS + '_unpriced', 'data-token-cost-unpriced': true }, t('row.unpriced')),
+        model.priced && bandRows.length === 0 ? h('div', { className: ROOT_CLASS + '_flatNote', 'data-token-cost-flat': true }, t('note.flat')) : null,
         bandRows.length === 0 ? null : Divider(),
         bandRows.length === 0 ? null : h('dl', { className: ROOT_CLASS + '_details', 'data-token-cost-bands': true }, bandRows),
         link === null ? null : Divider(),
@@ -453,19 +440,19 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** Dialog body: headline total, divider, scrollable tab strip, active panel. */
+    /** Dialog body: headline total, divider, model tabs, active model panel. */
     function CostBody(props) {
       const { view, t } = props;
       const models = view.models;
-      const tabCount = models.length + 1;
+      const tabCount = models.length;
       const [active, setActive] = React.useState(0);
       // The models list may shrink while the dialog is open (a provider fold
       // changing the projection); clamp instead of indexing out of range.
-      const index = Math.min(Math.max(0, Math.floor(numberOf(active))), tabCount - 1);
+      const index = tabCount === 0 ? 0 : Math.min(Math.max(0, Math.floor(numberOf(active))), tabCount - 1);
 
       const select = (next) => setActive(next);
       const onKeyDown = (event) => {
-        if (event === null || typeof event !== 'object') return;
+        if (tabCount === 0 || event === null || typeof event !== 'object') return;
         let next = -1;
         if (event.key === 'ArrowRight') next = (index + 1) % tabCount;
         else if (event.key === 'ArrowLeft') next = (index + tabCount - 1) % tabCount;
@@ -476,24 +463,8 @@ window.__ModuleLoader__.load({
         select(next);
       };
 
-      const tabs = [
-        h(
-          'button',
-          {
-            key: 'all',
-            type: 'button',
-            role: 'tab',
-            className: ROOT_CLASS + '_tab',
-            'aria-selected': index === 0,
-            tabIndex: index === 0 ? 0 : -1,
-            'data-token-cost-tab': 'all',
-            onClick: () => select(0),
-          },
-          h('span', { className: ROOT_CLASS + '_tabName' }, t('tab.all')),
-        ),
-      ];
+      const tabs = [];
       models.forEach((model, position) => {
-        const target = position + 1;
         tabs.push(
           h(
             'button',
@@ -502,11 +473,11 @@ window.__ModuleLoader__.load({
               type: 'button',
               role: 'tab',
               className: ROOT_CLASS + '_tab',
-              'aria-selected': index === target,
-              tabIndex: index === target ? 0 : -1,
+              'aria-selected': index === position,
+              tabIndex: index === position ? 0 : -1,
               title: model.name,
               'data-token-cost-tab': model.key,
-              onClick: () => select(target),
+              onClick: () => select(position),
             },
             h('span', { className: ROOT_CLASS + '_tabName' }, model.name),
             model.priced ? h('span', { className: ROOT_CLASS + '_tabAmount' }, symbolOf(model.currency) + formatMoney(model.micro)) : null,
@@ -514,7 +485,7 @@ window.__ModuleLoader__.load({
         );
       });
 
-      const content = index === 0 ? h(AggregateDetails, { view, t }) : h(ModelDetails, { model: models[index - 1], t });
+      const content = tabCount === 0 ? null : h(ModelDetails, { model: models[index], t });
 
       return h(
         React.Fragment,

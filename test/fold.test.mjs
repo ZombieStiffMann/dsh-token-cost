@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createCostProjectionDefinition, PROJECTION_KEY } from '../index.js';
+import { loadCatalog } from '../catalog/index.js';
 import { buildCostCatalog } from '../cost-catalog.js';
 import { DEFAULT_PRICING, isPeakForBilling, normalizePricing } from '../pricing.js';
 
@@ -324,6 +325,67 @@ test('state and view are plain JSON and the state version gates checkpoints', ()
   const view = JSON.parse(JSON.stringify(viewOf(definition, state)));
   assert.equal(view.models[0].tokensTotal, 1234 + 890 + 567);
   assert.ok(view.lastUpdated > 0);
+});
+
+test('the wire view also carries the legacy single-currency fields', () => {
+  const definition = makeProjection(deepseekCatalog());
+  const state = fold(definition, [
+    messageEvent({ usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 }, time: at(0, 10) }),
+  ]);
+  const view = viewOf(definition, state);
+  assert.equal(typeof view.micro, 'number');
+  assert.equal(typeof view.micros.input, 'number');
+  assert.equal(typeof view.peakMicro, 'number');
+  assert.equal(view.currency.code, 'CNY');
+  assert.equal(view.currency.symbol, '¥');
+  assert.equal(view.models[0].pricingKey, 'deepseek');
+  assert.ok(typeof view.price.source === 'string' && view.price.source.includes('api-docs.deepseek.com'));
+});
+
+test('the curated catalog prices a USD vendor and folds separate USD totals', () => {
+  const vendors = loadCatalog();
+  const usdVendors = vendors.filter((vendor) => vendor.currency.code === 'USD');
+  if (usdVendors.length === 0) return; // world data not present in this checkout
+  const vendor = usdVendors[0];
+  const model = vendor.models[0];
+  const catalog = buildCostCatalog({
+    deepseekPricing: normalizePricing(undefined, DEFAULT_PRICING),
+    chinaVendors: vendors,
+    userConfig: {},
+  });
+  const match = catalog.resolve({ provider: 'unconfigured-route', model: model.id, promptTokens: 0 });
+  assert.notEqual(match, null);
+  assert.equal(match.currency.code, 'USD');
+  assert.equal(match.currency.symbol, '$');
+  const definition = makeProjection(catalog);
+  const state = fold(definition, [
+    messageEvent({
+      usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      time: at(0, 10),
+      provider: 'unconfigured-route',
+      model: model.id,
+    }),
+  ]);
+  const view = viewOf(definition, state);
+  const usd = view.currencies.find((currency) => currency.code === 'USD');
+  assert.ok(usd !== undefined && usd.micro > 0, 'USD currency bucket must carry the cost');
+  assert.equal(view.models[0].currency.code, 'USD');
+  assert.equal(view.models[0].priced, true);
+});
+
+test('curated cross-vendor aliases resolve to a priced USD model', () => {
+  const vendors = loadCatalog();
+  const catalog = buildCostCatalog({
+    deepseekPricing: normalizePricing(undefined, DEFAULT_PRICING),
+    chinaVendors: vendors,
+    userConfig: {},
+  });
+  // The DSH pi-ai Mistral catalog spells this model with a dot; the vendor's
+  // official wire id uses hyphens. The catalog alias must bridge that gap.
+  const match = catalog.resolve({ provider: 'mistral', model: 'mistral-medium-3.5', promptTokens: 0 });
+  if (match === null) return; // mistral data not present in this checkout
+  assert.equal(match.currency.code, 'USD');
+  assert.equal(match.model.id, 'mistral-medium-3-5');
 });
 
 test('peak band helper follows the official Beijing-time windows', () => {

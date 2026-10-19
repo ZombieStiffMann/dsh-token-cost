@@ -231,6 +231,34 @@ test('display metadata follows the vendor and per-model overrides', () => {
   assert.deepEqual(overridden.currency, { code: 'USD', symbol: '$' });
 });
 
+test('a world (USD) vendor keeps its currency through the lookup result', () => {
+  const cnyVendor = makeVendor({
+    vendor: 'acme',
+    name: 'Acme',
+    providers: ['acme'],
+    models: [makeModel({ id: 'acme-chat', name: 'Acme Chat', rates: rateSet({ cacheMiss: 2, cacheHit: 0.2, output: 8 }) })],
+  });
+  const usdVendor = makeVendor({
+    vendor: 'globex',
+    name: 'Globex',
+    providers: ['globex'],
+    currency: { code: 'USD', symbol: '$' },
+    source: 'https://globex.example/pricing',
+    models: [makeModel({ id: 'globex-1', name: 'Globex 1', rates: rateSet({ cacheMiss: 3, cacheHit: 0.3, output: 12 }) })],
+  });
+  const lookup = createLookup([cnyVendor, usdVendor]);
+
+  const usd = lookup({ provider: 'globex', model: 'globex-1', promptTokens: 1000 });
+  assert.deepEqual(usd.currency, { code: 'USD', symbol: '$' });
+  assert.deepEqual(usd.rates, { cacheHit: 0.3, cacheMiss: 3, cacheWrite: 3, output: 12 }, 'rates stay in USD as published');
+  assert.equal(usd.vendor, 'globex');
+  assert.equal(usd.source, 'https://globex.example/pricing');
+
+  const cny = lookup({ model: 'acme-chat' });
+  assert.deepEqual(cny.currency, { code: 'CNY', symbol: '¥' });
+  assert.equal(cny.rates.cacheMiss, 2, 'USD and CNY catalogs never share rates');
+});
+
 test('model notes are included only when documented', () => {
   const noted = createLookup([makeVendor({ models: [makeModel({ notes: 'Batch API has separate pricing.' })] })])({ model: 'model-a' });
   assert.deepEqual(noted.model, { id: 'model-a', name: 'Model A', notes: 'Batch API has separate pricing.' });
