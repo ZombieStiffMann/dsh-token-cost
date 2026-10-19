@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-20
+
+Bilingual settings dialog with display-currency conversion.
+
+### Added
+
+- A small settings dialog inside the cost popover (gear button in the title row):
+  - **Language**: 跟随应用 / 中文 / English — an in-plugin override of the
+    Harness locale, applied to every string immediately.
+  - **Display currency**: 原币种 (native, the default) / CNY ¥ / USD $ — converts
+    every displayed amount into one currency, with an explicit, user-editable
+    exchange rate (`1 USD = ¥7.20` by default) shown as an estimate line.
+  - Preferences persist in `localStorage` (`dsh-token-cost.settings.v1`); the
+    panel is fully bilingual and safe when storage is unavailable.
+- Localized copy for the settings panel, FX estimate line and all existing
+  labels in both zh and en.
+
+### Changed
+
+- Converted display mode shows a single target-currency total in the pill/title,
+  converts per-model bucket and peak/off-peak amounts, and never mixes symbols;
+  native mode keeps the previous per-currency behaviour.
+- README documents the settings panel, conversion semantics and the accuracy
+  caveat (conversion is a display estimate at a user-set rate).
+
 ## [0.3.0] - 2026-10-20
 
 Per-model tabs, upgrade compatibility and international (USD) vendor prices.

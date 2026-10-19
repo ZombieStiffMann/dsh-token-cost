@@ -4,9 +4,11 @@
 // stub (no DOM renderer), then exercises the states the pill and its breakdown
 // dialog must handle: normal cost, missing projection, zero usage,
 // unpriced-only, mixed unpriced, malformed view, currency totals, the
-// per-model tab strip (one tab per model, keyboard switching, tab clamping,
-// clamping when the models list shrinks), K/M token counts, two-decimal money,
-// dividers, per-model official price links and locale key resolution.
+// per-model tab strip (keyboard switching, tab clamping when the models list
+// shrinks), K/M token counts, two-decimal money, dividers, per-model official
+// price links, locale key resolution, and the settings panel (UI language
+// override + persistence, display currency conversion with a user-editable
+// USD->CNY rate, native mode, and localStorage-absent safety).
 //
 // Run: node test/component.test.cjs
 const fs = require('node:fs');
@@ -46,6 +48,56 @@ global.window = {
   setTimeout: () => 0,
   clearTimeout() {},
 };
+
+// ---- deterministic localStorage stub ---------------------------------------
+// Node may expose a non-functional localStorage getter; replace it with an
+// inspectable in-memory store before anything renders.
+const SETTINGS_KEY = 'dsh-token-cost.settings.v1';
+let storageWrites = [];
+
+function makeStorage(initial) {
+  const map = new Map();
+  if (initial !== undefined) map.set(SETTINGS_KEY, typeof initial === 'string' ? initial : JSON.stringify(initial));
+  return {
+    getItem(key) {
+      return map.has(key) ? map.get(key) : null;
+    },
+    setItem(key, value) {
+      map.set(key, String(value));
+      storageWrites.push({ key, value: String(value) });
+    },
+    removeItem(key) {
+      map.delete(key);
+    },
+    clear() {
+      map.clear();
+    },
+  };
+}
+
+function resetStorage(initial) {
+  delete globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { value: makeStorage(initial), configurable: true, writable: true });
+  storageWrites = [];
+}
+
+/** Simulate a browser without localStorage at all. */
+function clearStorage() {
+  delete globalThis.localStorage;
+}
+
+function storedSettings() {
+  if (typeof globalThis.localStorage === 'undefined' || globalThis.localStorage === null) return null;
+  const raw = globalThis.localStorage.getItem(SETTINGS_KEY);
+  if (typeof raw !== 'string') return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+resetStorage();
 vm.runInThisContext(code, { filename: 'client.js' });
 
 const captured = global.__captured;
@@ -68,7 +120,6 @@ const noop = () => {};
 const hookStore = new Map();
 let hookType = null;
 let hookCursor = 0;
-let pendingFirstState = null;
 
 function hookCell() {
   if (typeof hookType !== 'function') throw new Error('hook used outside a component render');
@@ -93,14 +144,8 @@ const ReactStub = {
   useState: (init) => {
     const cell = hookCell();
     if (!(cell.index in cell.store.cells)) {
-      let value = init;
-      // The pill's first hook is its open/closed state; let a render request
-      // ask for an already-open dialog without reaching into the component.
-      if (pendingFirstState !== null) {
-        value = pendingFirstState;
-        pendingFirstState = null;
-      }
-      cell.store.cells[cell.index] = { value };
+      // Match React: a function initializer is called lazily on first mount.
+      cell.store.cells[cell.index] = { value: typeof init === 'function' ? init() : init };
     }
     const stored = cell.store.cells[cell.index];
     const setValue = (next) => {
@@ -199,6 +244,7 @@ check(!css.includes('@import'), 'styles must not import external CSS');
 check(css.includes('overflow-x:auto'), 'tab strip must scroll horizontally');
 check(css.includes('text-overflow:ellipsis'), 'tab labels must ellipsize');
 check(css.includes('[aria-selected'), 'the selected tab must be styled');
+check(css.includes('[aria-pressed'), 'the selected settings choice must be styled');
 check(css.includes('@media (width<=480px)'), 'responsive label hiding must be kept');
 for (const dispose of disposers) if (typeof dispose === 'function') dispose();
 check(styleTag.removed === true, 'style effect cleanup must remove the style tag');
@@ -223,30 +269,36 @@ function makeT(locale) {
 }
 
 /**
- * Render the pill (and, when `open`, its portal panel) for a projection view.
- * Hook state is reset per scenario unless `resetHooks: false`, which re-renders
- * a new view while keeping the dialog's tab selection.
+ * Mount the slot component for a projection view. Hook state is reset per
+ * scenario unless `resetHooks: false`, which re-renders a new view while
+ * keeping the dialog's open / tab / screen / settings state.
  */
 function render(view, settings) {
   const config = settings || {};
   if (config.resetHooks !== false) hookStore.clear();
-  pendingFirstState = config.open === true ? true : null;
-  try {
-    let element = CostPill({
-      useProjection: (key) => (key === 'tokenCost' ? view : undefined),
-      t: makeT(config.locale || 'zh'),
-    });
-    if (element !== null && typeof element === 'object' && typeof element.type === 'function') {
-      element = invoke(element.type, element.props);
-    }
-    return element;
-  } finally {
-    pendingFirstState = null;
+  let element = invoke(CostPill, {
+    useProjection: (key) => (key === 'tokenCost' ? view : undefined),
+    t: makeT(config.locale || 'zh'),
+  });
+  if (element !== null && typeof element === 'object' && typeof element.type === 'function') {
+    element = invoke(element.type, element.props);
   }
+  return element;
 }
 
-function openDialog(view, locale, settings) {
-  return render(view, Object.assign({ open: true, locale: locale || 'zh' }, settings || {}));
+/** Re-render the mounted tree while preserving hook state (React update). */
+function rerender(view, locale) {
+  return render(view, { locale: locale || 'zh', resetHooks: false });
+}
+
+/** Open the dialog the way a user does (click the pill), then rebuild the tree. */
+function openDialog(view, locale) {
+  const first = render(view, { locale: locale || 'zh' });
+  if (first === null || first === undefined) return null;
+  const trigger = findNode(first, (node) => node.type === 'button' && node.props !== undefined && node.props['aria-haspopup'] === 'dialog');
+  if (trigger === undefined) return null;
+  trigger.props.onClick();
+  return rerender(view, locale || 'zh');
 }
 
 // ---- tree walkers (invoke function components as real React would) ---------
@@ -377,6 +429,26 @@ const tablistOf = (element) => findNode(element, (node) => node.props !== undefi
 const tabsOf = (element) => findNodes(element, (node) => node.props !== undefined && node.props.role === 'tab');
 const tabpanelOf = (element) => findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-tabpanel'] === true);
 const anchorsOf = (node) => findNodes(node, (child) => child.type === 'a');
+const settingsToggleOf = (element) => findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-settings-toggle'] === true);
+const settingsPanelOf = (element) => findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-settings'] === true);
+const settingsBackOf = (element) => findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-settings-back'] === true);
+const fxInputOf = (element) => findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-fx-input'] === true);
+const fxLineOf = (element) => findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-fx'] === true);
+const titleValueOf = (element) => findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-title-value'] === true);
+const settingChoiceOf = (element, marker, value) =>
+  findNode(element, (node) => node.props !== undefined && node.props['data-token-cost-' + marker] === value);
+const pillTextOf = (element) => {
+  const trigger = findNode(element, (node) => node.type === 'button' && node.props !== undefined && node.props['aria-haspopup'] === 'dialog');
+  return trigger === undefined ? '' : findText(trigger).trim();
+};
+
+/** Open the in-dialog settings panel and return it. */
+function openSettings(element) {
+  const toggle = settingsToggleOf(element);
+  if (toggle === undefined) return undefined;
+  toggle.props.onClick();
+  return settingsPanelOf(element);
+}
 
 // ---- frozen `tokenCost` view fixture --------------------------------------
 const BASE_TOKENS = { input: 273974, cacheRead: 31034624, cacheWrite: 0, output: 144423, reasoning: 0 };
@@ -564,6 +636,85 @@ function makeCacheWriteView() {
     tokensTotal: 31458021,
     currencies: [makeCurrency({ tokens, micro: 1502358, micros })],
     models: [makeModel({ tokens, tokensTotal: 31458021, micro: 1502358, micros })],
+  });
+}
+
+/**
+ * Mixed CNY + USD view sized so the frozen CNY conversion example holds:
+ * the USD model costs 14,000,000 micro = $14.00 -> ¥100.80 at 7.2.
+ */
+function makeFxView() {
+  const cnyTokens = { input: 100000, cacheRead: 200000, cacheWrite: 0, output: 50000, reasoning: 0 };
+  const cnyMicros = { input: 1200000, cacheRead: 220000, cacheWrite: 0, output: 900000 };
+  const usdTokens = { input: 50000, cacheRead: 20000, cacheWrite: 0, output: 80000, reasoning: 0 };
+  const usdMicros = { input: 6000000, cacheRead: 2000000, cacheWrite: 0, output: 6000000 };
+  return {
+    currencies: [
+      { code: 'CNY', symbol: '¥', micro: 2320000, tokens: cnyTokens, micros: cnyMicros, peakMicro: 1000000, offPeakMicro: 1320000, saving: 0 },
+      { code: 'USD', symbol: '$', micro: 14000000, tokens: usdTokens, micros: usdMicros, peakMicro: 5000000, offPeakMicro: 9000000, saving: 0 },
+    ],
+    tokens: { input: 150000, cacheRead: 220000, cacheWrite: 0, output: 130000, reasoning: 0 },
+    tokensTotal: 500000,
+    models: [
+      {
+        key: 'cny-model',
+        provider: 'deepseek-official',
+        model: 'deepseek-flash',
+        name: 'DeepSeek-V4.1-Flash',
+        vendor: 'deepseek',
+        vendorName: 'DeepSeek',
+        priced: true,
+        currency: { code: 'CNY', symbol: '¥' },
+        micro: 2320000,
+        tokens: cnyTokens,
+        tokensTotal: 350000,
+        micros: cnyMicros,
+        peakMicro: 1000000,
+        offPeakMicro: 1320000,
+        source: 'https://example.test/cny-pricing',
+        asOf: '2026-10-19',
+      },
+      {
+        key: 'usd-model',
+        provider: 'openai',
+        model: 'gpt-x',
+        name: 'GPT-X',
+        vendor: 'openai',
+        vendorName: 'OpenAI',
+        priced: true,
+        currency: { code: 'USD', symbol: '$' },
+        micro: 14000000,
+        tokens: usdTokens,
+        tokensTotal: 150000,
+        micros: usdMicros,
+        peakMicro: 5000000,
+        offPeakMicro: 9000000,
+        source: 'https://example.test/usd-pricing',
+        asOf: '2026-10-19',
+      },
+    ],
+    unpricedTokens: 0,
+    unpricedModels: [],
+    lastUpdated: 1760000000002,
+  };
+}
+
+/**
+ * Single CNY model sized for the frozen USD conversion example:
+ * 14,723,580 micro / 7.2 = 2,044,941.7 -> $2.04 (rounded).
+ */
+function makeUsdTargetView() {
+  const tokens = { input: 400000, cacheRead: 200000, cacheWrite: 0, output: 100000, reasoning: 0 };
+  const micros = { input: 5000000, cacheRead: 2000000, cacheWrite: 0, output: 7723580 };
+  return makeView({
+    tokens,
+    tokensTotal: 700000,
+    currencies: [
+      makeCurrency({ tokens, micro: 14723580, micros, peakMicro: 4000000, offPeakMicro: 10723580 }),
+    ],
+    models: [
+      makeModel({ tokens, tokensTotal: 700000, micro: 14723580, micros, peakMicro: 4000000, offPeakMicro: 10723580 }),
+    ],
   });
 }
 
@@ -944,7 +1095,7 @@ for (const locale of ['zh', 'en']) {
   }
   // Re-render the same dialog with fewer models while the third tab is
   // selected: the index must clamp to the only remaining tab, never throw.
-  const shrunk = render(makeView(), { open: true, locale: 'zh', resetHooks: false });
+  const shrunk = render(makeView(), { locale: 'zh', resetHooks: false });
   const shrunkTabs = tabsOf(shrunk);
   check(shrunkTabs.length === 1, 'shrunk view must rebuild the tab strip, got ' + shrunkTabs.length);
   check(shrunkTabs[0].props['aria-selected'] === true, 'stale tab index must clamp to the remaining tab');
@@ -952,7 +1103,339 @@ for (const locale of ['zh', 'en']) {
   check(findText(tabpanelOf(shrunk)).includes('¥1.47'), 'clamped model tab must render the new model content');
 }
 
-// ---- 13) locale dictionaries: parity, coverage and no unresolved keys ----
+// ---- 14) settings panel: localized controls, selected state, back --------
+for (const locale of ['zh', 'en']) {
+  resetStorage();
+  const element = openDialog(makeView(), locale);
+  const toggle = settingsToggleOf(element);
+  check(toggle !== undefined, locale + ': dialog title row must render the settings button');
+  if (toggle === undefined) continue;
+  check(toggle.props['aria-label'] === (locale === 'zh' ? '设置' : 'Settings'), locale + ': settings button aria-label must be localized, got ' + toggle.props['aria-label']);
+  check(toggle.props['aria-expanded'] === false, locale + ': settings button must start collapsed');
+  const titleRow = findNode(
+    element,
+    (node) => typeof node.type === 'string' && node.props !== undefined && typeof node.props.className === 'string' && node.props.className.endsWith('_title'),
+  );
+  check(
+    titleRow !== undefined && findNode(titleRow, (node) => node.props !== undefined && node.props['data-token-cost-settings-toggle'] === true) !== undefined,
+    locale + ': settings button must sit in the dialog title row',
+  );
+
+  const panel = openSettings(element);
+  check(panel !== undefined, locale + ': settings button must open the settings panel');
+  if (panel === undefined) continue;
+  check(settingsToggleOf(element).props['aria-expanded'] === true, locale + ': settings button must be expanded while settings are open');
+  check(tabsOf(element).length === 0, locale + ': settings screen must replace the breakdown tabs');
+  const panelText = findText(panel);
+  check(panelText.includes(locale === 'zh' ? '设置' : 'Settings'), locale + ': settings heading must be localized');
+  check(panelText.includes(locale === 'zh' ? '界面语言' : 'Language'), locale + ': language row label must be localized');
+  check(panelText.includes(locale === 'zh' ? '显示货币' : 'Display currency'), locale + ': currency row label must be localized');
+
+  const languageLabels = locale === 'zh' ? ['跟随应用', '中文', 'English'] : ['Follow app', '中文', 'English'];
+  const languageValues = ['auto', 'zh', 'en'];
+  for (let i = 0; i < languageValues.length; i += 1) {
+    const choice = settingChoiceOf(element, 'language', languageValues[i]);
+    check(choice !== undefined, locale + ': missing language option ' + languageValues[i]);
+    if (choice === undefined) continue;
+    check(findText(choice) === languageLabels[i], locale + ': language option copy, got ' + JSON.stringify(findText(choice)));
+    check(choice.props['aria-pressed'] === (i === 0), locale + ': language selected state must show on ' + languageValues[i]);
+  }
+
+  const currencyLabels = locale === 'zh' ? ['原币种', 'CNY ¥', 'USD $'] : ['Native', 'CNY ¥', 'USD $'];
+  const currencyValues = ['native', 'CNY', 'USD'];
+  for (let i = 0; i < currencyValues.length; i += 1) {
+    const choice = settingChoiceOf(element, 'currency', currencyValues[i]);
+    check(choice !== undefined, locale + ': missing currency option ' + currencyValues[i]);
+    if (choice === undefined) continue;
+    check(findText(choice) === currencyLabels[i], locale + ': currency option copy, got ' + JSON.stringify(findText(choice)));
+    check(choice.props['aria-pressed'] === (i === 0), locale + ': currency selected state must show on ' + currencyValues[i]);
+  }
+
+  check(panelText.includes('1 USD = ¥'), locale + ': fx input label must be visible');
+  const fx = fxInputOf(element);
+  check(fx !== undefined, locale + ': missing fx rate input');
+  if (fx !== undefined) {
+    check(fx.props.type === 'number' && fx.props.step === 0.01, locale + ': fx input must be a number input with step 0.01');
+    check(fx.props.value === '7.2', locale + ': fx input must show the current rate, got ' + JSON.stringify(fx.props.value));
+    check(fx.props['aria-label'] === '1 USD = ¥', locale + ': fx input needs the localized label as aria-label');
+  }
+  check(panelText.includes(locale === 'zh' ? '自定义估算汇率' : 'User-set estimate'), locale + ': fx helper text must note the user-set estimate');
+  check(panelText.includes(locale === 'zh' ? '返回明细' : 'Back to breakdown'), locale + ': settings needs a back control');
+
+  const back = settingsBackOf(element);
+  check(back !== undefined, locale + ': missing settings back control');
+  if (back !== undefined) {
+    back.props.onClick();
+    check(settingsPanelOf(element) === undefined, locale + ': back control must leave the settings screen');
+    check(tabsOf(element).length === 1, locale + ': back control must restore the breakdown tabs');
+    check(settingsToggleOf(element).props['aria-expanded'] === false, locale + ': settings button must collapse after going back');
+  }
+}
+
+// ---- 15) language override applies immediately and persists --------------
+{
+  resetStorage();
+  const view = makeMixedView();
+  let element = openDialog(view, 'zh');
+  check(openSettings(element) !== undefined, 'language test: settings panel must open');
+  settingChoiceOf(element, 'language', 'en').props.onClick();
+  check(storedSettings() !== null && storedSettings().language === 'en', 'language change must persist, got ' + JSON.stringify(storedSettings()));
+  check(storageWrites.length > 0 && storageWrites[storageWrites.length - 1].key === SETTINGS_KEY, 'language change must write the settings key');
+
+  element = rerender(view, 'zh'); // app locale stays zh; the plugin override is en
+  let panel = settingsPanelOf(element);
+  check(panel !== undefined, 'language override: settings screen must stay open across the re-render');
+  if (panel !== undefined) {
+    check(findText(panel).includes('Settings'), 'language override must localize the settings panel immediately');
+    check(!findText(panel).includes('设置'), 'language override must remove the app-provided Chinese copy');
+  }
+  check(settingsToggleOf(element).props['aria-label'] === 'Settings', 'language override must localize the settings button aria-label');
+  settingsBackOf(element).props.onClick();
+  check(collectRows(element, 'data-token-cost-tokens').includes('Uncached input'), 'language override must localize model rows');
+  check(!collectRows(element, 'data-token-cost-tokens').includes('未命中缓存输入'), 'language override must not keep app-provided Chinese rows');
+  tabsOf(element)[1].props.onClick();
+  check(findText(tabpanelOf(element)).includes('Unpriced'), 'language override must localize the unpriced marker');
+
+  // Back to auto: the app-provided translator applies again.
+  check(openSettings(element) !== undefined, 'language test: settings panel must reopen');
+  settingChoiceOf(element, 'language', 'auto').props.onClick();
+  check(storedSettings().language === 'auto', 'switching back to auto must persist');
+  element = rerender(view, 'zh');
+  panel = settingsPanelOf(element);
+  check(panel !== undefined, 'auto language: settings screen must stay open');
+  if (panel !== undefined) {
+    check(findText(panel).includes('设置'), 'auto language must restore the app-provided Chinese translator');
+    check(!findText(panel).includes('Settings'), 'auto language must not keep the English override');
+  }
+
+  // The override also applies to strings outside the dialog (pill).
+  resetStorage({ language: 'en', currency: 'native', fxRate: 7.2 });
+  check(
+    findText(render(makeUnpricedView(), { locale: 'zh' })).includes('Unpriced'),
+    'language override must localize the unpriced pill outside the dialog',
+  );
+  resetStorage();
+}
+
+// ---- 16) CNY display mode converts a mixed CNY+USD view ------------------
+for (const locale of ['zh', 'en']) {
+  resetStorage({ language: 'auto', currency: 'CNY', fxRate: 7.2 });
+  const element = openDialog(makeFxView(), locale);
+  check(titleValueOf(element) !== undefined && findText(titleValueOf(element)) === '¥103.12', locale + ': converted title must be one CNY total, got ' + JSON.stringify(findText(titleValueOf(element))));
+  check(pillTextOf(element) === '¥103.12', locale + ': converted pill must be one CNY total, got ' + JSON.stringify(pillTextOf(element)));
+  const tabs = tabsOf(element);
+  check(tabs.length === 2, locale + ': converted dialog must keep one tab per model, got ' + tabs.length);
+  if (tabs.length === 2) {
+    check(findText(tabs[0]).includes('¥2.32'), locale + ': CNY model tab must keep its amount');
+    check(findText(tabs[1]).includes('¥100.80'), locale + ': USD model tab must convert to CNY, got ' + JSON.stringify(findText(tabs[1])));
+    check(!findText(tabs[1]).includes('$'), locale + ': converted model tab must not show $');
+  }
+  const fx = fxLineOf(element);
+  check(fx !== undefined, locale + ': conversion mode must show the FX line');
+  if (fx !== undefined) {
+    const expectedFx = locale === 'zh' ? '汇率 1 USD = ¥7.20（估算）' : 'FX 1 USD = ¥7.20 (estimate)';
+    check(findText(fx) === expectedFx, locale + ': FX line copy, got ' + JSON.stringify(findText(fx)));
+  }
+  check(!findText(element).includes('$'), locale + ': converted dialog must not mix in any $ amount');
+}
+{
+  // The selected USD model tab shows converted bucket and band amounts.
+  resetStorage({ language: 'auto', currency: 'CNY', fxRate: 7.2 });
+  const element = openDialog(makeFxView(), 'zh');
+  tabsOf(element)[1].props.onClick();
+  const panel = tabpanelOf(element);
+  check(panel !== undefined, 'CNY mode: USD model tab must render a panel');
+  if (panel !== undefined) {
+    const panelText = findText(panel);
+    for (const amount of ['¥43.20', '¥14.40', '¥36.00', '¥64.80']) {
+      check(panelText.includes(amount), 'CNY mode: USD model tab missing converted amount ' + amount + ' in ' + JSON.stringify(panelText));
+    }
+    check(!panelText.includes('$'), 'CNY mode: converted model rows must not show $');
+  }
+}
+
+// ---- 17) USD display mode converts a CNY view ----------------------------
+{
+  resetStorage({ language: 'auto', currency: 'USD', fxRate: 7.2 });
+  const element = openDialog(makeUsdTargetView(), 'zh');
+  const titleText = findText(titleValueOf(element));
+  check(titleText === '$2.04', 'USD mode title must be the rounded converted total, got ' + JSON.stringify(titleText));
+  check(pillTextOf(element) === '$2.04', 'USD mode pill must be one $ total, got ' + JSON.stringify(pillTextOf(element)));
+  const tabs = tabsOf(element);
+  check(tabs.length === 1, 'USD mode must keep the model tab');
+  if (tabs.length === 1) {
+    check(findText(tabs[0]).includes('$2.04'), 'USD mode model tab amount must convert, got ' + JSON.stringify(findText(tabs[0])));
+    check(!findText(tabs[0]).includes('¥'), 'USD mode model tab must not show ¥');
+  }
+  const panel = tabpanelOf(element);
+  check(panel !== undefined, 'USD mode must render the model panel');
+  const panelText = panel === undefined ? '' : findText(panel);
+  check(panelText.includes('$0.69') && panelText.includes('$0.28') && panelText.includes('$1.07'), 'USD mode model rows must convert with the $ symbol, got ' + JSON.stringify(panelText));
+  check(panelText.includes('$0.56') && panelText.includes('$1.49'), 'USD mode band rows must convert with the $ symbol, got ' + JSON.stringify(panelText));
+  check(!panelText.includes('¥'), 'USD mode model panel must not show ¥');
+  const fx = fxLineOf(element);
+  check(fx !== undefined && findText(fx).includes('¥7.20'), 'USD mode FX line must still show the USD->CNY rate');
+}
+
+// ---- 18) fx rate edit re-converts; invalid input is ignored --------------
+{
+  resetStorage({ language: 'auto', currency: 'CNY', fxRate: 7.2 });
+  const view = makeFxView();
+  let element = openDialog(view, 'zh');
+  check(openSettings(element) !== undefined, 'fx test: settings panel must open');
+  let input = fxInputOf(element);
+  check(input !== undefined && input.props.value === '7.2', 'fx test: input must start at the stored rate');
+  if (input === undefined) {
+    check(false, 'fx test: missing input');
+  } else {
+    input.props.onChange({ target: { value: '8' } });
+    check(storedSettings() !== null && storedSettings().fxRate === 8, 'valid fx edit must persist, got ' + JSON.stringify(storedSettings()));
+    element = rerender(view, 'zh');
+    check(findText(titleValueOf(element)) === '¥114.32', 'fx edit must re-convert the total, got ' + JSON.stringify(findText(titleValueOf(element))));
+    const fx = fxLineOf(element);
+    check(fx !== undefined && findText(fx).includes('¥8.00'), 'fx line must show the edited rate, got ' + JSON.stringify(fx === undefined ? undefined : findText(fx)));
+    // Back to the breakdown to see the converted tab amount.
+    settingsBackOf(element).props.onClick();
+    const usdTab = tabsOf(element)[1];
+    check(
+      usdTab !== undefined && findText(usdTab).includes('¥112.00'),
+      'fx edit must re-convert the model tab amount, got ' + JSON.stringify(usdTab === undefined ? undefined : findText(usdTab)),
+    );
+
+    // Invalid inputs stay in the field but are neither persisted nor converted.
+    check(openSettings(element) !== undefined, 'fx test: settings must reopen');
+    input = fxInputOf(element);
+    const writesBefore = storageWrites.length;
+    input.props.onChange({ target: { value: 'abc' } });
+    check(storageWrites.length === writesBefore, 'invalid fx input must not write localStorage');
+    input.props.onChange({ target: { value: '-3' } });
+    input.props.onChange({ target: { value: '' } });
+    input.props.onChange(null);
+    check(storedSettings().fxRate === 8, 'invalid fx input must keep the stored rate, got ' + JSON.stringify(storedSettings()));
+    element = rerender(view, 'zh');
+    check(findText(titleValueOf(element)) === '¥114.32', 'invalid fx input must not change the conversion');
+    // Out-of-range rates clamp to the sane bounds instead of breaking formatting.
+    input = fxInputOf(element);
+    input.props.onChange({ target: { value: '100000000' } });
+    check(storedSettings().fxRate === 10000, 'out-of-range fx input must clamp, got ' + JSON.stringify(storedSettings()));
+    check(fxLineOf(rerender(view, 'zh')) !== undefined, 'clamped fx rate must still render the FX line');
+  }
+}
+
+// ---- 19) native mode keeps the mixed-currency display -------------------
+{
+  resetStorage({ language: 'auto', currency: 'native', fxRate: 7.2 });
+  const view = makeMultiCurrencyView();
+  let element = openDialog(view, 'zh');
+  check(pillTextOf(element) === '¥2.32 · $0.14', 'native pill must join the mixed amounts, got ' + JSON.stringify(pillTextOf(element)));
+  check(fxLineOf(element) === undefined, 'native mode must not render the FX line');
+  check(openSettings(element) !== undefined, 'native test: settings panel must open');
+  settingChoiceOf(element, 'currency', 'CNY').props.onClick();
+  element = rerender(view, 'zh');
+  const cnyPill = pillTextOf(element);
+  check(cnyPill.includes('¥') && !cnyPill.includes('$'), 'CNY mode pill must be one ¥ total, got ' + JSON.stringify(cnyPill));
+  check(fxLineOf(element) !== undefined, 'CNY mode must render the FX line');
+  check(settingsPanelOf(element) !== undefined, 'settings must stay open after a currency change');
+  settingChoiceOf(element, 'currency', 'native').props.onClick();
+  element = rerender(view, 'zh');
+  check(pillTextOf(element) === '¥2.32 · $0.14', 'switching back to native must restore the mixed pill, got ' + JSON.stringify(pillTextOf(element)));
+  check(fxLineOf(element) === undefined, 'native mode must hide the FX line again');
+  settingsBackOf(element).props.onClick();
+  const nativeText = findText(element);
+  check(
+    !nativeText.includes('FX 1 USD') && !nativeText.includes('汇率 1 USD'),
+    'native mode must not render conversion copy on the breakdown, got ' + JSON.stringify(nativeText),
+  );
+}
+
+// ---- 20) preferences persist across a fresh mount -----------------------
+{
+  resetStorage();
+  const view = makeFxView();
+  const element = openDialog(view, 'zh');
+  check(openSettings(element) !== undefined, 'persistence test: settings panel must open');
+  settingChoiceOf(element, 'language', 'en').props.onClick();
+  settingChoiceOf(element, 'currency', 'CNY').props.onClick();
+  fxInputOf(element).props.onChange({ target: { value: '8' } });
+  check(
+    JSON.stringify(storedSettings()) === JSON.stringify({ language: 'en', currency: 'CNY', fxRate: 8 }),
+    'all three preferences must persist together, got ' + JSON.stringify(storedSettings()),
+  );
+  // Fresh mount: hook state is dropped, storage is read again.
+  const fresh = openDialog(view, 'zh');
+  check(fresh !== null, 'fresh mount must render');
+  check(pillTextOf(fresh) === '¥114.32', 'fresh mount must restore the converted currency, got ' + JSON.stringify(pillTextOf(fresh)));
+  const freshFx = fxLineOf(fresh);
+  check(freshFx !== undefined && findText(freshFx) === 'FX 1 USD = ¥8.00 (estimate)', 'fresh mount must restore language + fx rate, got ' + JSON.stringify(freshFx === undefined ? undefined : findText(freshFx)));
+  check(settingsToggleOf(fresh).props['aria-label'] === 'Settings', 'fresh mount must restore the language override');
+  check(
+    findPortal(fresh).portal.props['aria-label'] === 'Token cost',
+    'fresh mount must localize the dialog aria-label with the stored language',
+  );
+  check(
+    findText(findPortal(fresh).portal).includes('Token cost'),
+    'fresh mount must localize the dialog title with the stored language',
+  );
+
+  // Closing and reopening the dialog keeps the persisted preferences.
+  findNode(fresh, (node) => node.type === 'button' && node.props !== undefined && node.props['aria-haspopup'] === 'dialog').props.onClick();
+  const closedTree = rerender(view, 'zh');
+  check(findPortal(closedTree) === undefined, 'closing the dialog must remove the portal');
+  const closedTrigger = findNode(closedTree, (node) => node.type === 'button' && node.props !== undefined && node.props['aria-haspopup'] === 'dialog');
+  check(
+    closedTrigger !== undefined && closedTrigger.props['aria-label'].startsWith('Token cost'),
+    'persisted language must survive closing the dialog, got ' + (closedTrigger === undefined ? 'no trigger' : closedTrigger.props['aria-label']),
+  );
+  closedTrigger.props.onClick();
+  const reopened = rerender(view, 'zh');
+  check(findPortal(reopened) !== undefined, 'reopening the dialog must restore the panel');
+  check(findText(findPortal(reopened).portal).includes('Token cost'), 'reopened dialog must keep the persisted language');
+}
+
+// ---- 21) malformed storage and missing localStorage are safe ------------
+{
+  resetStorage('{not-json');
+  check(findText(render(makeView(), { locale: 'zh' })).includes('¥1.47'), 'malformed stored JSON must fall back to defaults');
+  resetStorage({ language: 'xx', currency: 'BTC', fxRate: -5 });
+  const invalidFields = render(makeView(), { locale: 'zh' });
+  check(findText(invalidFields).includes('¥1.47'), 'invalid stored fields must fall back to the native defaults');
+  resetStorage({ language: 'auto', currency: 'native', fxRate: 1e9 });
+  const clamped = openDialog(makeView(), 'zh');
+  check(clamped !== null, 'out-of-range stored fx rate must not crash');
+  if (openSettings(clamped) !== undefined) {
+    const fx = fxInputOf(clamped);
+    check(fx !== undefined && fx.props.value === '10000', 'stored fx rate must clamp to the sane maximum, got ' + (fx === undefined ? undefined : JSON.stringify(fx.props.value)));
+  }
+
+  // FX line numbers: up to 4 decimals, trimmed to at least 2.
+  resetStorage({ language: 'auto', currency: 'CNY', fxRate: 7.2345 });
+  check(
+    findText(fxLineOf(openDialog(makeView(), 'zh'))).includes('¥7.2345'),
+    'FX line must keep up to 4 meaningful decimals, got ' + JSON.stringify(findText(fxLineOf(render(makeView(), { locale: 'zh' })))),
+  );
+  resetStorage({ language: 'auto', currency: 'CNY', fxRate: 7.2 });
+  check(
+    findText(fxLineOf(openDialog(makeView(), 'zh'))).includes('¥7.20'),
+    'FX line must trim trailing zeros but keep two decimals',
+  );
+
+  clearStorage(); // no localStorage global at all
+  const noStoragePill = render(makeView(), { locale: 'zh' });
+  check(noStoragePill !== null && findText(noStoragePill).includes('¥1.47'), 'missing localStorage must fall back to defaults');
+  const noStorageDialog = openDialog(makeView(), 'zh');
+  check(noStorageDialog !== null, 'missing localStorage must not break the dialog');
+  if (openSettings(noStorageDialog) !== undefined) {
+    settingChoiceOf(noStorageDialog, 'language', 'en').props.onClick();
+    settingChoiceOf(noStorageDialog, 'currency', 'CNY').props.onClick();
+  }
+  const inMemory = rerender(makeView(), 'zh');
+  check(inMemory !== null, 'missing localStorage must not break in-memory preference changes');
+  const inMemoryFx = fxLineOf(inMemory);
+  check(inMemoryFx !== undefined && findText(inMemoryFx) === 'FX 1 USD = ¥7.20 (estimate)', 'missing localStorage must still apply changes in memory, got ' + JSON.stringify(inMemoryFx === undefined ? undefined : findText(inMemoryFx)));
+  resetStorage();
+}
+
+// ---- 22) locale dictionaries: parity, coverage and no unresolved keys ----
 const zhKeys = Object.keys(dictionaries.zh);
 const enKeys = Object.keys(dictionaries.en);
 check(zhKeys.slice().sort().join('|') === enKeys.slice().sort().join('|'), 'zh and en dictionaries must define the same keys');

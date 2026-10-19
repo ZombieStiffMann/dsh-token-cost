@@ -4,10 +4,13 @@
  * Adds one ambient entry beside the shipped token-usage pill below the composer
  * (`conversation.composer.dock`, id `cost`, order 2). The entry renders the
  * estimated cost of the current Session, read from the Host projection
- * `tokenCost`; clicking it opens a compact billing breakdown with an aggregate
- * "全部" tab, one tab per model used by the Session, and a link to that model's
- * official price page. The component never folds session events itself and
- * imports no Harness client package.
+ * `tokenCost`; clicking it opens a compact billing breakdown with one tab per
+ * model used by the Session and a link to that model's official price page. A
+ * small in-dialog settings panel switches the UI language (follow-app / 中文 /
+ * English) and the display currency (native / CNY / USD, converted with a
+ * user-editable USD->CNY rate); preferences persist in localStorage. The
+ * component never folds session events itself and imports no Harness client
+ * package.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-token-cost',
@@ -37,6 +40,20 @@ window.__ModuleLoader__.load({
       'note.flat': '该模型按厂商统一单价计费（无高峰/空闲时段）',
       'link.official': '官方价格',
       'link.asOf': '数据日期 {date}',
+      'settings.open': '设置',
+      'settings.title': '设置',
+      'settings.language': '界面语言',
+      'settings.currency': '显示货币',
+      'settings.back': '返回明细',
+      'language.auto': '跟随应用',
+      'language.zh': '中文',
+      'language.en': 'English',
+      'currency.native': '原币种',
+      'currency.CNY': 'CNY ¥',
+      'currency.USD': 'USD $',
+      'fx.label': '1 USD = ¥',
+      'fx.hint': '自定义估算汇率，仅影响本插件的费用显示',
+      'fx.line': '汇率 1 USD = ¥{rate}（估算）',
     };
     const en = {
       'pill.unpriced': 'Unpriced',
@@ -55,6 +72,20 @@ window.__ModuleLoader__.load({
       'note.flat': 'No peak/off-peak bands for this model; billed at the vendor flat rate',
       'link.official': 'Official pricing',
       'link.asOf': 'Data as of {date}',
+      'settings.open': 'Settings',
+      'settings.title': 'Settings',
+      'settings.language': 'Language',
+      'settings.currency': 'Display currency',
+      'settings.back': 'Back to breakdown',
+      'language.auto': 'Follow app',
+      'language.zh': '中文',
+      'language.en': 'English',
+      'currency.native': 'Native',
+      'currency.CNY': 'CNY ¥',
+      'currency.USD': 'USD $',
+      'fx.label': '1 USD = ¥',
+      'fx.hint': 'User-set estimate; only changes the display in this plugin',
+      'fx.line': 'FX 1 USD = ¥{rate} (estimate)',
     };
     //#endregion
 
@@ -108,6 +139,35 @@ window.__ModuleLoader__.load({
       '.' + ROOT_CLASS + '_linkLabel{color:var(--dsw-alias-label-primary);font-weight:600}',
       '.' + ROOT_CLASS + '_link{color:var(--dsw-alias-brand-primary);font-size:12px;line-height:16px;word-break:break-all;text-decoration:none}',
       '.' + ROOT_CLASS + '_link:hover{text-decoration:underline}',
+      '.' + ROOT_CLASS + '_titleActions{display:inline-flex;align-items:center;gap:8px;min-width:0}',
+      '.' + ROOT_CLASS + '_gear{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;justify-content:center;',
+      'width:22px;height:22px;padding:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:0 0;',
+      'color:var(--dsw-alias-label-tertiary);cursor:pointer}',
+      '.' + ROOT_CLASS + '_gear:hover,.' + ROOT_CLASS + '_gear[aria-expanded=true]{',
+      'background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-primary)}',
+      '.' + ROOT_CLASS + '_gear:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,var(--dsw-alias-brand-primary)));outline-offset:1px}',
+      '.' + ROOT_CLASS + '_gear svg{flex:none;width:14px;height:14px}',
+      '.' + ROOT_CLASS + '_fxLine{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin:6px 0 0}',
+      '.' + ROOT_CLASS + '_settings{min-width:0}',
+      '.' + ROOT_CLASS + '_settingsHeading{color:var(--dsw-alias-label-primary);font-weight:600;margin:0 0 8px}',
+      '.' + ROOT_CLASS + '_settingGroup{margin:0 0 10px}',
+      '.' + ROOT_CLASS + '_settingLabel{color:var(--dsw-alias-label-primary);font-weight:600;display:block;margin:0 0 4px}',
+      '.' + ROOT_CLASS + '_choices{display:flex;flex-wrap:wrap;gap:4px}',
+      '.' + ROOT_CLASS + '_choice{box-sizing:border-box;padding:2px 8px;border:0;border-radius:var(--dsw-radius-sm,6px);background:0 0;',
+      'color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;white-space:nowrap;cursor:pointer}',
+      '.' + ROOT_CLASS + '_choice:hover,.' + ROOT_CLASS + '_choice[aria-pressed=true]{',
+      'background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-primary)}',
+      '.' + ROOT_CLASS + '_choice[aria-pressed=true]{font-weight:600}',
+      '.' + ROOT_CLASS + '_choice:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,var(--dsw-alias-brand-primary)));outline-offset:1px}',
+      '.' + ROOT_CLASS + '_fxRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.' + ROOT_CLASS + '_fxInput{box-sizing:border-box;width:88px;padding:2px 6px;border-radius:var(--dsw-radius-sm,6px);',
+      'border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);',
+      'font:inherit;font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}',
+      '.' + ROOT_CLASS + '_fxHint{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin:4px 0 0}',
+      '.' + ROOT_CLASS + '_back{display:inline-flex;align-items:center;gap:6px;padding:2px 0;border:0;background:0 0;',
+      'color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:16px;cursor:pointer}',
+      '.' + ROOT_CLASS + '_back:hover{text-decoration:underline}',
+      '.' + ROOT_CLASS + '_back:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,var(--dsw-alias-brand-primary)));outline-offset:1px}',
       '@media (width<=480px){.' + ROOT_CLASS + '_label{display:none}.' + ROOT_CLASS + '_pill{padding:1px 6px}}',
     ].join('');
     //#endregion
@@ -152,6 +212,110 @@ window.__ModuleLoader__.load({
     function symbolOf(currency) {
       const symbol = currency?.symbol;
       return typeof symbol === 'string' && symbol !== '' ? symbol : '¥';
+    }
+    //#endregion
+
+    //#region preferences (localStorage, language override, display currency)
+    const SETTINGS_KEY = 'dsh-token-cost.settings.v1';
+    const DEFAULT_SETTINGS = { language: 'auto', currency: 'native', fxRate: 7.2 };
+    const LANGUAGES = ['auto', 'zh', 'en'];
+    const CURRENCIES = ['native', 'CNY', 'USD'];
+    /** Sanity bounds of the user-editable USD->CNY rate. */
+    const FX_MIN = 0.0001;
+    const FX_MAX = 10000;
+
+    /** Symbol of a display currency; CNY and USD are the supported pair. */
+    function symbolForCurrency(currency) {
+      return currency === 'USD' ? '$' : '¥';
+    }
+
+    function interpolate(template, params) {
+      if (!params) return template;
+      return template.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match));
+    }
+
+    /** FX numbers: localized, up to 4 decimals trimmed but at least 2 decimals. */
+    function formatFxRate(rate) {
+      const value = Math.min(FX_MAX, Math.max(FX_MIN, numberOf(rate)));
+      try {
+        return new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value);
+      } catch {
+        const fixed = value.toFixed(4);
+        let trimmed = fixed;
+        if (fixed.indexOf('.') >= 0) {
+          trimmed = fixed.replace(/0+$/, '');
+          if (trimmed.endsWith('.')) trimmed += '00';
+          const decimals = trimmed.length - trimmed.indexOf('.') - 1;
+          if (decimals < 2) trimmed += '0'.repeat(2 - decimals);
+        }
+        return trimmed;
+      }
+    }
+
+    /** Validate a stored settings object; unknown/malformed values fall back to defaults. */
+    function normalizeSettings(raw) {
+      if (!isRecord(raw)) return Object.assign({}, DEFAULT_SETTINGS);
+      let fxRate = DEFAULT_SETTINGS.fxRate;
+      if (typeof raw.fxRate === 'number' && Number.isFinite(raw.fxRate) && raw.fxRate > 0) {
+        fxRate = Math.min(FX_MAX, Math.max(FX_MIN, raw.fxRate));
+      }
+      return {
+        language: LANGUAGES.includes(raw.language) ? raw.language : DEFAULT_SETTINGS.language,
+        currency: CURRENCIES.includes(raw.currency) ? raw.currency : DEFAULT_SETTINGS.currency,
+        fxRate,
+      };
+    }
+
+    /** Read persisted preferences; a missing, blocked or malformed storage yields defaults. */
+    function readSettings() {
+      try {
+        if (typeof localStorage === 'undefined' || localStorage === null) return Object.assign({}, DEFAULT_SETTINGS);
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (typeof raw !== 'string' || raw === '') return Object.assign({}, DEFAULT_SETTINGS);
+        return normalizeSettings(JSON.parse(raw));
+      } catch {
+        return Object.assign({}, DEFAULT_SETTINGS);
+      }
+    }
+
+    /** Persist preferences; a blocked storage only costs persistence, never rendering. */
+    function writeSettings(settings) {
+      try {
+        if (typeof localStorage === 'undefined' || localStorage === null) return;
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      } catch {
+        // Best effort: the in-memory preference still applies for this session.
+      }
+    }
+
+    /** Resolve the UI translator: 'auto' delegates to the app-provided `t`. */
+    function makeTranslator(language, appT) {
+      const dict = language === 'auto' ? null : language === 'zh' ? zh : en;
+      if (dict === null) {
+        if (typeof appT === 'function') return appT;
+        return (key, params) => {
+          const template = zh[key];
+          return template === undefined ? key : interpolate(template, params);
+        };
+      }
+      return (key, params) => {
+        const template = dict[key];
+        if (template === undefined) return typeof appT === 'function' ? appT(key, params) : key;
+        return interpolate(template, params);
+      };
+    }
+
+    /**
+     * Convert an integer micro-amount from its source currency into the target
+     * display currency. Only the CNY <-> USD pair is defined; an amount of an
+     * unknown currency is left unchanged because no exchange rate exists for it.
+     */
+    function convertMicro(micro, sourceCurrency, targetCurrency, fxRate) {
+      const amount = numberOf(micro);
+      if (targetCurrency === 'native' || sourceCurrency === targetCurrency) return amount;
+      if (sourceCurrency === 'USD' && targetCurrency === 'CNY') return Math.round(amount * fxRate);
+      if (sourceCurrency === 'CNY' && targetCurrency === 'USD') return Math.round(amount / fxRate);
+      return amount;
     }
     //#endregion
 
@@ -318,21 +482,36 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** Pill / title amount: per-currency totals, or the unpriced marker. */
-    function amountLabel(view, t) {
+    /** Pill / dialog-title amount: per-currency native totals, or one converted total. */
+    function amountLabel(view, t, settings) {
       const used = usedCurrencies(view);
       if (used.length === 0) return t('pill.unpriced');
-      return used.map((currency) => symbolOf(currency) + formatMoney(currency.micro)).join(' · ');
+      if (settings.currency === 'native') {
+        return used.map((currency) => symbolOf(currency) + formatMoney(currency.micro)).join(' · ');
+      }
+      let total = 0;
+      for (const currency of used) total += convertMicro(currency.micro, currency.code, settings.currency, settings.fxRate);
+      return symbolForCurrency(settings.currency) + formatMoney(total);
     }
 
-    /** ` · ¥1.23 · $0.01` cost tail for one aggregate bucket, per used currency. */
-    function costSuffix(currencies, readMicro) {
-      let text = '';
-      for (const currency of currencies) {
-        const code = currencies.length > 1 ? currency.code + ' ' : '';
-        text += ' · ' + code + symbolOf(currency) + formatMoney(readMicro(currency));
-      }
-      return text;
+    /** Tab label amount for one model, in the configured display currency. */
+    function modelAmountText(model, settings) {
+      if (!model.priced) return null;
+      if (settings.currency === 'native') return symbolOf(model.currency) + formatMoney(model.micro);
+      const sourceCurrency = model.currency === null ? settings.currency : model.currency.code;
+      return symbolForCurrency(settings.currency) + formatMoney(convertMicro(model.micro, sourceCurrency, settings.currency, settings.fxRate));
+    }
+
+    /** Convert one bucket/band micro-amount of a model into the display currency. */
+    function displayMicro(model, micro, settings) {
+      if (settings.currency === 'native') return numberOf(micro);
+      const sourceCurrency = model.currency === null ? settings.currency : model.currency.code;
+      return convertMicro(micro, sourceCurrency, settings.currency, settings.fxRate);
+    }
+
+    /** Symbol used for a model's money in the configured display currency. */
+    function modelSymbol(model, settings) {
+      return settings.currency === 'native' ? symbolOf(model.currency) : symbolForCurrency(settings.currency);
     }
     //#endregion
 
@@ -367,11 +546,11 @@ window.__ModuleLoader__.load({
 
     /** One model tab: only the billing dimensions that model actually has. */
     function ModelDetails(props) {
-      const { model, t } = props;
+      const { model, t, settings } = props;
       const tokens = model.tokens;
       const micros = model.micros ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
-      const symbol = symbolOf(model.currency);
-      const costOf = (bucket) => (model.priced ? ' · ' + symbol + formatMoney(micros[bucket]) : '');
+      const symbol = modelSymbol(model, settings);
+      const costOf = (bucket) => (model.priced ? ' · ' + symbol + formatMoney(displayMicro(model, micros[bucket], settings)) : '');
       const rows = [
         h(DetailRow, { key: 'input', label: t('row.input') }, h('b', null, formatTokens(tokens.input)), costOf('input')),
         h(DetailRow, { key: 'cacheRead', label: t('row.cacheRead') }, h('b', null, formatTokens(tokens.cacheRead)), costOf('cacheRead')),
@@ -388,10 +567,10 @@ window.__ModuleLoader__.load({
 
       const bandRows = [];
       if (model.peakMicro !== null) {
-        bandRows.push(h(DetailRow, { key: 'peak', label: t('band.peak') }, symbol + formatMoney(model.peakMicro)));
+        bandRows.push(h(DetailRow, { key: 'peak', label: t('band.peak') }, symbol + formatMoney(displayMicro(model, model.peakMicro, settings))));
       }
       if (model.offPeakMicro !== null) {
-        bandRows.push(h(DetailRow, { key: 'offPeak', label: t('band.offPeak') }, symbol + formatMoney(model.offPeakMicro)));
+        bandRows.push(h(DetailRow, { key: 'offPeak', label: t('band.offPeak') }, symbol + formatMoney(displayMicro(model, model.offPeakMicro, settings))));
       }
 
       const metaParts = [];
@@ -440,15 +619,130 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** Dialog body: headline total, divider, model tabs, active model panel. */
+    function SettingsIcon(props) {
+      return h(
+        'svg',
+        Object.assign({ viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', 'aria-hidden': true }, props ?? {}),
+        h('circle', { cx: 8, cy: 8, r: 2.15, stroke: 'currentColor', strokeWidth: 1.2 }),
+        h('path', {
+          d: 'M8 1.5v2.1M8 12.4v2.1M1.5 8h2.1M12.4 8h2.1M3.4 3.4l1.5 1.5M11.1 11.1l1.5 1.5M12.6 3.4l-1.5 1.5M4.9 11.1l-1.5 1.5',
+          stroke: 'currentColor',
+          strokeWidth: 1.1,
+          strokeLinecap: 'round',
+        }),
+      );
+    }
+
+    /** One labelled row of exclusive choice buttons (aria-pressed = selected). */
+    function ChoiceGroup(props) {
+      const { label, marker, options, value, onSelect } = props;
+      return h(
+        'div',
+        { className: ROOT_CLASS + '_settingGroup' },
+        h('span', { className: ROOT_CLASS + '_settingLabel' }, label),
+        h(
+          'div',
+          { className: ROOT_CLASS + '_choices', role: 'group', 'aria-label': label },
+          options.map((option) =>
+            h(
+              'button',
+              {
+                key: option.value,
+                type: 'button',
+                className: ROOT_CLASS + '_choice',
+                'aria-pressed': option.value === value,
+                ['data-token-cost-' + marker]: option.value,
+                onClick: () => onSelect(option.value),
+              },
+              option.label,
+            ),
+          ),
+        ),
+      );
+    }
+
+    /** In-dialog settings: UI language, display currency and the USD->CNY rate. */
+    function SettingsPanel(props) {
+      const { t, settings, updateSettings, onBack } = props;
+      const [fxDraft, setFxDraft] = React.useState(() => String(settings.fxRate));
+      const onFxChange = (event) => {
+        const raw = event !== null && typeof event === 'object' && event.target !== undefined ? event.target.value : '';
+        const text = typeof raw === 'string' ? raw : String(raw ?? '');
+        setFxDraft(text);
+        if (text.trim() === '') return;
+        const parsed = Number(text);
+        // Invalid or non-positive input stays in the field but is never persisted.
+        if (!Number.isFinite(parsed) || parsed <= 0) return;
+        updateSettings({ fxRate: Math.min(FX_MAX, Math.max(FX_MIN, parsed)) });
+      };
+      const languageOptions = LANGUAGES.map((value) => ({
+        value,
+        label: t(value === 'auto' ? 'language.auto' : value === 'zh' ? 'language.zh' : 'language.en'),
+      }));
+      const currencyOptions = CURRENCIES.map((value) => ({
+        value,
+        label: t(value === 'native' ? 'currency.native' : value === 'CNY' ? 'currency.CNY' : 'currency.USD'),
+      }));
+      return h(
+        'div',
+        { className: ROOT_CLASS + '_settings', 'data-token-cost-settings': true },
+        h('div', { className: ROOT_CLASS + '_settingsHeading' }, t('settings.title')),
+        h(ChoiceGroup, {
+          label: t('settings.language'),
+          marker: 'language',
+          options: languageOptions,
+          value: settings.language,
+          onSelect: (language) => updateSettings({ language }),
+        }),
+        h(ChoiceGroup, {
+          label: t('settings.currency'),
+          marker: 'currency',
+          options: currencyOptions,
+          value: settings.currency,
+          onSelect: (currency) => updateSettings({ currency }),
+        }),
+        h(
+          'div',
+          { className: ROOT_CLASS + '_settingGroup' },
+          h('span', { className: ROOT_CLASS + '_settingLabel' }, t('fx.label')),
+          h(
+            'div',
+            { className: ROOT_CLASS + '_fxRow' },
+            h('input', {
+              type: 'number',
+              className: ROOT_CLASS + '_fxInput',
+              step: 0.01,
+              min: FX_MIN,
+              max: FX_MAX,
+              inputMode: 'decimal',
+              value: fxDraft,
+              'aria-label': t('fx.label'),
+              'data-token-cost-fx-input': true,
+              onChange: onFxChange,
+            }),
+          ),
+          h('div', { className: ROOT_CLASS + '_fxHint' }, t('fx.hint')),
+        ),
+        Divider(),
+        h(
+          'button',
+          { type: 'button', className: ROOT_CLASS + '_back', 'data-token-cost-settings-back': true, onClick: onBack },
+          t('settings.back'),
+        ),
+      );
+    }
+
+    /** Dialog body: title row (total + settings), tabs, active model panel. */
     function CostBody(props) {
-      const { view, t } = props;
+      const { view, t, settings, updateSettings } = props;
       const models = view.models;
       const tabCount = models.length;
       const [active, setActive] = React.useState(0);
+      const [screen, setScreen] = React.useState('details');
       // The models list may shrink while the dialog is open (a provider fold
       // changing the projection); clamp instead of indexing out of range.
       const index = tabCount === 0 ? 0 : Math.min(Math.max(0, Math.floor(numberOf(active))), tabCount - 1);
+      const showSettings = screen === 'settings';
 
       const select = (next) => setActive(next);
       const onKeyDown = (event) => {
@@ -480,12 +774,20 @@ window.__ModuleLoader__.load({
               onClick: () => select(position),
             },
             h('span', { className: ROOT_CLASS + '_tabName' }, model.name),
-            model.priced ? h('span', { className: ROOT_CLASS + '_tabAmount' }, symbolOf(model.currency) + formatMoney(model.micro)) : null,
+            model.priced ? h('span', { className: ROOT_CLASS + '_tabAmount' }, modelAmountText(model, settings)) : null,
           ),
         );
       });
 
-      const content = tabCount === 0 ? null : h(ModelDetails, { model: models[index], t });
+      const content = tabCount === 0 ? null : h(ModelDetails, { model: models[index], t, settings });
+
+      const details = h(
+        React.Fragment,
+        null,
+        h('div', { role: 'tablist', 'aria-label': t('tabs.aria'), className: ROOT_CLASS + '_tabs', onKeyDown }, tabs),
+        Divider(),
+        h('div', { role: 'tabpanel', className: ROOT_CLASS + '_tabPanel', 'data-token-cost-tabpanel': true }, content),
+      );
 
       return h(
         React.Fragment,
@@ -494,23 +796,42 @@ window.__ModuleLoader__.load({
           'div',
           { className: ROOT_CLASS + '_title' },
           h('span', { className: ROOT_CLASS + '_titleLabel' }, h(CostIcon), t('dialog.title')),
-          h('span', { className: ROOT_CLASS + '_titleValue' }, amountLabel(view, t)),
+          h(
+            'span',
+            { className: ROOT_CLASS + '_titleActions' },
+            h('span', { className: ROOT_CLASS + '_titleValue', 'data-token-cost-title-value': true }, amountLabel(view, t, settings)),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: ROOT_CLASS + '_gear',
+                'aria-label': t('settings.open'),
+                'aria-expanded': showSettings,
+                'data-token-cost-settings-toggle': true,
+                onClick: () => setScreen(showSettings ? 'details' : 'settings'),
+              },
+              h(SettingsIcon),
+            ),
+          ),
         ),
+        settings.currency === 'native'
+          ? null
+          : h('div', { className: ROOT_CLASS + '_fxLine', 'data-token-cost-fx': true }, t('fx.line', { rate: formatFxRate(settings.fxRate) })),
         Divider(),
-        h('div', { role: 'tablist', 'aria-label': t('tabs.aria'), className: ROOT_CLASS + '_tabs', onKeyDown }, tabs),
-        Divider(),
-        h('div', { role: 'tabpanel', className: ROOT_CLASS + '_tabPanel', 'data-token-cost-tabpanel': true }, content),
+        showSettings
+          ? h(SettingsPanel, { t, settings, updateSettings, onBack: () => setScreen('details') })
+          : details,
       );
     }
 
     function CostTrigger(props) {
-      const { view, t } = props;
+      const { view, t, settings, updateSettings } = props;
       const [open, setOpen] = React.useState(false);
       const [pos, setPos] = React.useState(null);
       const rootRef = React.useRef(null);
       const panelRef = React.useRef(null);
       const unpricedOnly = usedCurrencies(view).length === 0;
-      const amount = amountLabel(view, t);
+      const amount = amountLabel(view, t, settings);
       const ariaLabel = unpricedOnly ? t('pill.ariaUnpriced') : t('pill.aria', { amount });
 
       React.useLayoutEffect(() => {
@@ -569,7 +890,7 @@ window.__ModuleLoader__.load({
                 'data-token-cost-dialog': true,
                 style: pos === null ? { visibility: 'hidden', left: 0, bottom: 0 } : { left: pos.left, bottom: pos.bottom },
               },
-              h(CostBody, { view, t }),
+              h(CostBody, { view, t, settings, updateSettings }),
             ),
             document.body,
           );
@@ -604,8 +925,17 @@ window.__ModuleLoader__.load({
       // that fails to supply it (the pill then simply stays hidden).
       const useProjection = typeof props.useProjection === 'function' ? props.useProjection : () => undefined;
       const view = normalizeView(useProjection('tokenCost'));
+      const [settings, setSettings] = React.useState(readSettings);
+      const updateSettings = (patch) => {
+        setSettings((previous) => {
+          const next = normalizeSettings(Object.assign({}, previous, patch));
+          writeSettings(next);
+          return next;
+        });
+      };
       if (view === null || !hasUsage(view)) return null;
-      return h(CostTrigger, { view, t: props.t });
+      const t = makeTranslator(settings.language, props.t);
+      return h(CostTrigger, { view, t, settings, updateSettings });
     }
     //#endregion
 

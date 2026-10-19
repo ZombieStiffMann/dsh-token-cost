@@ -1,6 +1,6 @@
 {
   "name": "dsh-token-cost",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "DeepSeek Harness plugin that estimates the cost of tokens consumed in the current session, pricing every model at its vendor's latest official rates — DeepSeek, Qwen, GLM, Kimi, Doubao, Hunyuan, ERNIE, MiniMax, StepFun, SenseNova, MiMo (CNY) and OpenAI, Anthropic, Google Gemini, xAI, Mistral, Cohere (USD).",
   "type": "module",
   "exports": {

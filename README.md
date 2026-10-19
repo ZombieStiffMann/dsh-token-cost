@@ -19,7 +19,10 @@ Cohere) — and splits the breakdown per model in a tabbed dialog.
 The pill sits after the shipped activity/usage pills. Click it and each model has
 its own tab — a tab only shows the billing dimensions that model actually has:
 
-<!-- A screenshot of the tabbed dialog is welcome here (docs/preview.png). -->
+![Cost popover with the DeepSeek tab, K/M token counts, peak/off-peak rows and the official price link with its data date](docs/preview.png)
+
+The gear in the title row opens the language and display-currency settings (see
+[Settings](#settings)).
 
 ```text
 Token 费用                              ¥2.32
@@ -110,8 +113,11 @@ cost = Σ tokens_in_bucket × official_rate(bucket) × band_multiplier(timestamp
 - Context-length tiered models use the tier that contains the request's prompt
   size (used by OpenAI long-context, xAI long-context, Gemini long-context,
   Claude Haiku 5.5 and some Chinese vendors).
-- Currencies are never summed across each other: a session that uses both CNY and
-  USD models shows `¥1.23 · $0.45`, and each model tab keeps its own currency.
+- Currencies are never summed across each other by default: a session that uses
+  both CNY and USD models shows `¥1.23 · $0.45`, and each model tab keeps its
+  own currency. The optional display-currency setting converts amounts for
+  display only, at a user-set FX rate; the stored totals and the official bill
+  stay in the vendor's original currency.
 - Samples are folded with the same replacement/retry rules as the shipped
   `tokenUsage` projection, so token totals match the built-in usage pill.
 
@@ -149,7 +155,7 @@ plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost
 Pin a release:
 
 ```text
-plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost#v0.3.0
+plugin_manager install_bundle target=github:ZombieStiffMann/dsh-token-cost#v0.4.0
 ```
 
 For local development, point the manager at a checkout instead:
@@ -161,6 +167,28 @@ plugin_manager install_bundle target=<absolute path to this directory>
 Refresh the page after the first install so the new client module loads. Remove
 or disable it later from the **Plugins** page (or
 `plugin_manager remove_bundle target=dsh-token-cost`).
+
+## Settings
+
+Inside the cost popover, the gear button in the title row opens a small settings
+panel (bilingual, following the plugin language):
+
+- **Language**: 跟随应用 / 中文 / English. The plugin ships zh and en
+  dictionaries; *follow the app* is the default, and the override applies to
+  every string immediately.
+- **Display currency**: 原币种 / CNY ¥ / USD $. *Native* is the default: each
+  model tab and the pill show the money in the vendor's own currency, and a
+  mixed session shows both currencies side by side without conversion. Choosing
+  CNY or USD converts every displayed amount at the configured rate and shows a
+  single total.
+- **Exchange rate**: CNY per 1 USD (default 7.20), editable. Conversion is a
+  **display-only estimate** at a user-set rate — it never changes the Host's
+  accounting, the stored per-currency totals, or the official bill. The dialog
+  shows the active rate next to an `estimate` label.
+
+Preferences are stored in the browser (`localStorage` key
+`dsh-token-cost.settings.v1`) and survive reloads. The plugin still registers
+both locales, so the default follows the Harness language.
 
 ## Configuration
 
@@ -265,6 +293,11 @@ No dependencies, no build step: everything ships as plain ESM/JS.
 
 - Estimates only. The official bill remains authoritative, and prices change —
   curated data carries its `asOf` date and is updated by releases.
+- **Currency conversion is display-only.** Choosing CNY or USD in the settings
+  converts amounts at a rate you enter (default 1 USD = 7.20 CNY); it is not a
+  bank/card rate and does not change the stored per-currency totals or the
+  official bill. Use 原币种 (native) when you need the vendor's exact currency
+  amounts.
 - **Batch / flex / priority / fast / subscription plans are not modelled.** The
   catalog holds the vendor's standard pay-as-you-go online price (batch calls are
   often 50–60% of it); coding/token plans are subscriptions, and their per-token
