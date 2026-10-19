@@ -1,7 +1,7 @@
 {
   "name": "dsh-token-cost",
-  "version": "0.1.0",
-  "description": "DeepSeek Harness plugin that shows the estimated cost of tokens consumed in the current session, priced at the latest official rates and the peak/off-peak band of each usage timestamp.",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness plugin that estimates the cost of tokens consumed in the current session, pricing every model at its vendor's latest official CNY rates (DeepSeek, Qwen, GLM, Kimi, Doubao, Hunyuan, ERNIE, MiniMax, StepFun, SenseNova, MiMo).",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -13,16 +13,23 @@
     "index.js",
     "pricing.js",
     "official-pricing.js",
+    "cost-catalog.js",
+    "catalog/index.js",
+    "catalog/lookup.js",
+    "catalog/validate.js",
+    "catalog/china/*.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg"
   ],
   "scripts": {
-    "test": "node --test test/fold.test.mjs test/price-parser.test.mjs && node test/component.test.cjs",
+    "test": "node --test test/fold.test.mjs test/price-parser.test.mjs test/catalog.test.mjs test/lookup.test.mjs && node test/component.test.cjs",
     "test:fold": "node --test test/fold.test.mjs",
     "test:parser": "node --test test/price-parser.test.mjs",
-    "test:component": "node test/component.test.cjs"
+    "test:catalog": "node --test test/catalog.test.mjs test/lookup.test.mjs",
+    "test:component": "node test/component.test.cjs",
+    "validate:catalog": "node catalog/validate.js"
   },
   "keywords": [
     "deepseek",
@@ -32,6 +39,11 @@
     "token-cost",
     "llm-cost",
     "pricing",
+    "qwen",
+    "glm",
+    "kimi",
+    "doubao",
+    "hunyuan",
     "plugin"
   ],
   "author": "zombiestiffmann",

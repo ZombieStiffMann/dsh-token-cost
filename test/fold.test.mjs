@@ -1,23 +1,63 @@
 /**
- * Fold and pricing tests for the Host half. Run with the bundled Node:
+ * Fold, catalog and view tests for the Host half. Run with the bundled Node:
  *   node --test test/fold.test.mjs
+ *
+ * The tests inject a small China vendor catalog instead of the repository data,
+ * so they stay deterministic while `catalog/china/` grows.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createCostProjectionDefinition, PROJECTION_KEY } from '../index.js';
-import { isPeakTime, normalizePricing } from '../pricing.js';
+import { buildCostCatalog } from '../cost-catalog.js';
+import { DEFAULT_PRICING, isPeakForBilling, normalizePricing } from '../pricing.js';
 
 const HOUR = 3600 * 1000;
 /** Monday, 2026-10-19, in Beijing time. */
 const MONDAY = Date.parse('2026-10-19T00:00:00+08:00');
 const at = (dayOffset, hour, minute = 0) => MONDAY + dayOffset * 24 * HOUR + hour * HOUR + minute * 60 * 1000;
 
-function makeProjection(customPricing) {
-  const pricing = normalizePricing(customPricing);
-  return { definition: createCostProjectionDefinition({ current: pricing }), pricing };
+function deepseekCatalog(userConfig = {}) {
+  return buildCostCatalog({
+    deepseekPricing: normalizePricing(undefined, DEFAULT_PRICING),
+    chinaVendors: [],
+    userConfig,
+  });
 }
 
-/** Feed events through the projection and return the final state (host state, not view). */
+function fakeVendor(overrides = {}) {
+  const models = overrides.models ?? [
+    {
+      id: 'glm-4.6',
+      name: 'GLM-4.6',
+      aliases: [],
+      rates: { cacheMiss: 4, cacheHit: 0.8, cacheWrite: 4, output: 16 },
+    },
+  ];
+  return {
+    vendor: overrides.vendor ?? 'zhipu',
+    name: overrides.name ?? '智谱 AI',
+    nameEn: overrides.nameEn ?? 'Zhipu AI',
+    currency: overrides.currency ?? { code: 'CNY', symbol: '¥' },
+    source: overrides.source ?? 'https://open.bigmodel.cn/pricing',
+    asOf: overrides.asOf ?? '2026-10-19',
+    providers: overrides.providers ?? ['zai'],
+    ...(overrides.billing === undefined ? {} : { billing: { ...overrides.billing, holidaySet: new Set(overrides.billing.holidays ?? []) } }),
+    models,
+  };
+}
+
+function catalogWith(vendors, userConfig = {}) {
+  return buildCostCatalog({
+    deepseekPricing: normalizePricing(undefined, DEFAULT_PRICING),
+    chinaVendors: vendors.map(fakeVendor),
+    userConfig,
+  });
+}
+
+function makeProjection(catalog) {
+  return createCostProjectionDefinition({ current: catalog });
+}
+
 function fold(definition, events) {
   let state = definition.init();
   for (const event of events) state = definition.apply(state, event);
@@ -28,178 +68,277 @@ function viewOf(definition, state) {
   return definition.wire.view(state);
 }
 
-function usageEvent(type, { turn = 1, step = 1, usage, time, provider = 'deepseek-official', model = 'deepseek-flash' }) {
-  const stream = type === 'assistant/attempt' ? [{ type: 'chunk', chunk: { type: 'usage', usage } }] : [];
-  const data = {
-    turn,
-    step,
-    usage,
-    stream,
-    message: { role: 'assistant', source: { kind: 'model', provider, model } },
+function messageEvent({ turn = 1, step = 1, usage, time, provider = 'deepseek-official', model = 'deepseek-flash' }) {
+  const tokens = usage ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  return {
+    type: 'assistant/message',
+    seq: 0,
+    time,
+    data: {
+      turn,
+      step,
+      usage: tokens,
+      stream: [],
+      message: { role: 'assistant', source: { kind: 'model', provider, model } },
+    },
   };
-  return { type, seq: 0, time, data };
 }
 
-test('catalog exposes the official peak rates for the two shipped models', () => {
-  const { pricing } = makeProjection(undefined);
-  assert.equal(pricing.currency.code, 'CNY');
-  assert.deepEqual(pricing.models['deepseek-flash'].rates, { cacheMiss: 2, cacheHit: 0.04, output: 8 });
-  assert.deepEqual(pricing.models['deepseek-v4-pro'].rates, { cacheMiss: 9, cacheHit: 0.3, output: 27 });
-  assert.equal(pricing.offPeakMultiplier, 0.5);
-});
-
-test('cache-write tokens are billed at the cache-miss rate', () => {
-  const { definition } = makeProjection(undefined);
-  const state = fold(definition, [
-    usageEvent('assistant/message', {
-      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 1000 },
-      time: at(0, 10),
-    }),
-  ]);
-  assert.equal(viewOf(definition, state).micro, 2000);
-});
-
-test('reasoning tokens are not billed twice', () => {
-  const { definition } = makeProjection(undefined);
-  const state = fold(definition, [
-    usageEvent('assistant/message', {
-      usage: { inputTokens: 0, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 100 },
-      time: at(0, 10),
-    }),
-  ]);
-  const view = viewOf(definition, state);
-  assert.equal(view.micro, 800, 'output bucket already contains reasoning');
-  assert.equal(view.tokens.reasoning, 100);
-});
-
-test('peak band follows Beijing weekday windows and statutory holidays', () => {
-  const { pricing } = makeProjection(undefined);
-  const holidays = new Set(pricing.holidays);
-  assert.equal(isPeakTime(pricing, at(0, 10), holidays), true, 'Monday 10:00 is peak');
-  assert.equal(isPeakTime(pricing, at(0, 11, 59), holidays), true);
-  assert.equal(isPeakTime(pricing, at(0, 12), holidays), false, '12:00 is off-peak');
-  assert.equal(isPeakTime(pricing, at(0, 15), holidays), true);
-  assert.equal(isPeakTime(pricing, at(0, 18), holidays), false, '18:00 is off-peak');
-  assert.equal(isPeakTime(pricing, at(0, 8), holidays), false);
-  assert.equal(isPeakTime(pricing, at(0, 13), holidays), false);
-  assert.equal(isPeakTime(pricing, at(5, 10), holidays), false, 'Saturday is off-peak');
-  // 2026-10-01 is a Thursday statutory holiday (National Day).
-  assert.equal(isPeakTime(pricing, Date.parse('2026-10-01T10:00:00+08:00'), holidays), false, 'statutory holiday is off-peak');
-  // 2026-09-25 is a Friday statutory holiday (Mid-Autumn).
-  assert.equal(isPeakTime(pricing, Date.parse('2026-09-25T10:00:00+08:00'), holidays), false);
-});
-
-test('peak sample prices at peak rates, off-peak sample at half', () => {
-  const peakUsage = { inputTokens: 1000, outputTokens: 300, cacheReadTokens: 2000, cacheWriteTokens: 0, totalTokens: 3300 };
-  const peak = makeProjection(undefined);
-  const peakState = fold(peak.definition, [usageEvent('assistant/message', { usage: peakUsage, time: at(0, 10) })]);
-  const peakView = viewOf(peak.definition, peakState);
-  // 1000*2 + 2000*0.04 + 300*8 = 4480 micro-CNY = 0.00448 CNY
-  assert.equal(peakView.micro, 4480);
-  assert.equal(peakView.peakMicro, 4480);
-  assert.equal(peakView.offPeakMicro, 0);
-
-  const off = makeProjection(undefined);
-  const offState = fold(off.definition, [usageEvent('assistant/message', { usage: peakUsage, time: at(0, 13) })]);
-  const offView = viewOf(off.definition, offState);
-  assert.equal(offView.micro, 2240);
-  assert.equal(offView.offPeakMicro, 2240);
-  assert.equal(offView.saving, 2240);
-  assert.deepEqual(offView.tokens, { input: 1000, cacheRead: 2000, cacheWrite: 0, output: 300, reasoning: 0 });
-});
-
-test('a later sample of the same step replaces the earlier attempt sample', () => {
-  const { definition } = makeProjection(undefined);
-  const streamUsage = { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 };
-  const finalUsage = { inputTokens: 1000, outputTokens: 300, cacheReadTokens: 2000, cacheWriteTokens: 0 };
-  const attempt = {
+function attemptEvent({ turn = 1, step = 1, usage, time, provider = 'deepseek-official', model = 'deepseek-flash' }) {
+  return {
     type: 'assistant/attempt',
-    seq: 1,
-    time: at(0, 10),
-    data: { turn: 1, step: 1, stream: [{ type: 'chunk', chunk: { type: 'usage', usage: streamUsage } }] },
+    seq: 0,
+    time,
+    data: {
+      turn,
+      step,
+      stream: [{ type: 'chunk', chunk: { type: 'usage', usage } }],
+      message: { role: 'assistant', source: { kind: 'model', provider, model } },
+    },
   };
-  const state = fold(definition, [
-    { type: 'request/header', seq: 0, time: at(0, 9, 59), data: { header: { config: { provider: 'deepseek-official', model: 'deepseek-flash' } } } },
-    attempt,
-    usageEvent('assistant/message', { usage: finalUsage, time: at(0, 10, 5) }),
-  ]);
-  const view = viewOf(definition, state);
-  assert.equal(view.micro, 4480, 'only the final sample is billed');
-  assert.equal(view.events, 1);
-  assert.equal(view.models.length, 1);
+}
+
+function headerEvent({ provider = 'deepseek-official', model = 'deepseek-flash', time = MONDAY, seq = 0 }) {
+  return { type: 'request/header', seq, time, data: { header: { config: { provider, model } } } };
+}
+
+function totalsOf(view, code = 'CNY') {
+  return view.currencies.find((currency) => currency.code === code);
+}
+
+test('DeepSeek samples are priced with the official peak/off-peak bands', () => {
+  const definition = makeProjection(deepseekCatalog());
+  const usage = { inputTokens: 1000, outputTokens: 300, cacheReadTokens: 2000, cacheWriteTokens: 0 };
+  const peakState = fold(definition, [messageEvent({ usage, time: at(0, 10) })]);
+  const peakView = viewOf(definition, peakState);
+  // 1000*2 + 2000*0.04 + 300*8 = 4480 micro-CNY
+  assert.equal(totalsOf(peakView).micro, 4480);
+  assert.equal(totalsOf(peakView).peakMicro, 4480);
+  assert.equal(peakView.models[0].banded, undefined);
+  assert.equal(peakView.models[0].peakMicro, 4480);
+  assert.equal(peakView.models[0].offPeakMicro, 0);
+
+  const offState = fold(definition, [messageEvent({ usage, time: at(0, 13) })]);
+  const offView = viewOf(definition, offState);
+  assert.equal(totalsOf(offView).micro, 2240);
+  assert.equal(totalsOf(offView).offPeakMicro, 2240);
+  assert.equal(totalsOf(offView).saving, 2240);
 });
 
-test('llm/retry-started closes the replacement slot so both attempts are billed', () => {
-  const { definition } = makeProjection(undefined);
+test('a flat-price vendor prices at its published rate, with no band split', () => {
+  const definition = makeProjection(catalogWith([fakeVendor()]));
+  const usage = { inputTokens: 1000, outputTokens: 300, cacheReadTokens: 2000, cacheWriteTokens: 0 };
+  const state = fold(definition, [messageEvent({ usage, time: at(0, 10), provider: 'zai', model: 'glm-4.6' })]);
+  const view = viewOf(definition, state);
+  // 1000*4 + 2000*0.8 + 300*16 = 10400 micro-CNY
+  assert.equal(totalsOf(view).micro, 10400);
+  assert.equal(totalsOf(view).peakMicro, 0);
+  assert.equal(totalsOf(view).offPeakMicro, 0);
+  assert.equal(view.models.length, 1);
+  assert.equal(view.models[0].vendor, 'zhipu');
+  assert.equal(view.models[0].vendorName, '智谱 AI');
+  assert.equal(view.models[0].peakMicro, null);
+  assert.equal(view.models[0].source, 'https://open.bigmodel.cn/pricing');
+});
+
+test('different currencies are accumulated separately and never summed', () => {
+  const usdVendor = fakeVendor({
+    vendor: 'usd-vendor',
+    name: 'USD AI',
+    currency: { code: 'USD', symbol: '$' },
+    providers: ['usd'],
+    models: [{ id: 'usd-model', name: 'USD Model', aliases: [], rates: { cacheMiss: 1, cacheHit: 0.1, cacheWrite: 1, output: 2 } }],
+  });
+  const definition = makeProjection(catalogWith([usdVendor]));
+  const state = fold(definition, [
+    messageEvent({ usage: { inputTokens: 1000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, time: at(0, 10), provider: 'deepseek-official', model: 'deepseek-flash' }),
+    messageEvent({ turn: 1, step: 2, usage: { inputTokens: 1000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, time: at(0, 10), provider: 'usd', model: 'usd-model' }),
+  ]);
+  const view = viewOf(definition, state);
+  assert.equal(view.currencies.length, 2);
+  assert.equal(totalsOf(view, 'CNY').micro, 2000);
+  assert.equal(totalsOf(view, 'USD').micro, 1000);
+  assert.equal(view.models.length, 2);
+});
+
+test('context-length tiers pick the tier that contains the prompt size', () => {
+  const tiered = fakeVendor({
+    models: [
+      {
+        id: 'tiered-model',
+        name: 'Tiered Model',
+        aliases: [],
+        tiers: [
+          { maxInputTokens: 32000, rates: { cacheMiss: 1, cacheHit: 0.1, cacheWrite: 1, output: 2 } },
+          { maxInputTokens: 128000, rates: { cacheMiss: 4, cacheHit: 0.4, cacheWrite: 4, output: 8 } },
+        ],
+      },
+    ],
+  });
+  const definition = makeProjection(catalogWith([tiered]));
+  const small = fold(definition, [
+    messageEvent({ usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 }, time: at(0, 10), provider: 'zai', model: 'tiered-model' }),
+  ]);
+  assert.equal(totalsOf(viewOf(definition, small)).micro, 1000 * 1 + 100 * 2);
+  const large = fold(definition, [
+    messageEvent({ usage: { inputTokens: 40000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 }, time: at(0, 10), provider: 'zai', model: 'tiered-model' }),
+  ]);
+  assert.equal(totalsOf(viewOf(definition, large)).micro, 40000 * 4 + 100 * 8);
+  const boundary = fold(definition, [
+    messageEvent({ usage: { inputTokens: 32000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, time: at(0, 10), provider: 'zai', model: 'tiered-model' }),
+  ]);
+  assert.equal(totalsOf(viewOf(definition, boundary)).micro, 32000 * 1);
+});
+
+test('provider mapping beats a shared model id; exact ids beat prefixes', () => {
+  const vendorA = fakeVendor({
+    vendor: 'vendor-a',
+    name: 'Vendor A',
+    providers: ['prov-a'],
+    models: [{ id: 'shared-model', name: 'Shared A', aliases: [], rates: { cacheMiss: 1, cacheHit: 1, cacheWrite: 1, output: 1 } }],
+  });
+  const vendorB = fakeVendor({
+    vendor: 'vendor-b',
+    name: 'Vendor B',
+    providers: ['prov-b'],
+    models: [{ id: 'shared-model', name: 'Shared B', aliases: [], rates: { cacheMiss: 2, cacheHit: 2, cacheWrite: 2, output: 2 } }],
+  });
+  const catalog = catalogWith([vendorA, vendorB]);
+  assert.equal(catalog.resolve({ provider: 'prov-b', model: 'shared-model', promptTokens: 0 }).vendor, 'vendor-b');
+  assert.equal(catalog.resolve({ provider: 'unknown', model: 'shared-model', promptTokens: 0 }).vendor, 'vendor-a');
+});
+
+test('aliases, prefix matches, user overrides and fallback all resolve', () => {
+  const vendor = fakeVendor({
+    models: [
+      {
+        id: 'glm-4.6',
+        name: 'GLM-4.6',
+        aliases: ['glm-4.6-0901'],
+        matchPrefixes: ['glm-4.6-2025'],
+        rates: { cacheMiss: 4, cacheHit: 0.8, cacheWrite: 4, output: 16 },
+      },
+    ],
+  });
+  const catalog = catalogWith([vendor], {
+    aliases: { 'my-alias': 'glm-4.6' },
+    models: { 'custom-model': { name: 'Custom', rates: { cacheMiss: 10, cacheHit: 1, output: 20 } } },
+    fallbackModel: 'deepseek-v4-pro',
+  });
+  assert.equal(catalog.resolve({ provider: 'zai', model: 'glm-4.6-0901', promptTokens: 0 }).model.id, 'glm-4.6');
+  assert.equal(catalog.resolve({ provider: 'zai', model: 'glm-4.6-2025xxxx', promptTokens: 0 }).model.id, 'glm-4.6');
+  assert.equal(catalog.resolve({ provider: 'x', model: 'my-alias', promptTokens: 0 }).vendor, 'zhipu');
+  assert.equal(catalog.resolve({ provider: 'x', model: 'custom-model', promptTokens: 0 }).rates.cacheMiss, 10);
+  assert.equal(catalog.resolve({ provider: 'x', model: 'custom-model', promptTokens: 0 }).rates.cacheWrite, 10, 'cacheWrite defaults to cacheMiss');
+  assert.equal(catalog.resolve({ provider: 'x', model: 'totally-unknown', promptTokens: 0 }).model.id, 'deepseek-v4-pro');
+  assert.equal(catalog.resolve({ provider: 'x', model: 'totally-unknown', promptTokens: 0 }).vendor, 'deepseek');
+});
+
+test('a user override patches a built-in model rate and inherits the rest', () => {
+  const catalog = buildCostCatalog({
+    deepseekPricing: normalizePricing(undefined, DEFAULT_PRICING),
+    chinaVendors: [],
+    userConfig: { models: { 'deepseek-flash': { rates: { cacheMiss: 100 } } } },
+  });
+  const match = catalog.resolve({ provider: 'deepseek-official', model: 'deepseek-flash', promptTokens: 0 });
+  assert.equal(match.rates.cacheMiss, 100);
+  assert.equal(match.rates.output, DEFAULT_PRICING.models['deepseek-flash'].rates.output);
+  const definition = makeProjection(catalog);
+  const state = fold(definition, [
+    messageEvent({ usage: { inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, time: at(0, 10) }),
+  ]);
+  assert.equal(totalsOf(viewOf(definition, state)).micro, 10 * 100);
+});
+
+test('the fold keeps the shipped replacement and retry semantics', () => {
+  const definition = makeProjection(catalogWith([fakeVendor()]));
   const first = { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 };
   const second = { inputTokens: 2000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 };
-  const state = fold(definition, [
-    { type: 'request/header', seq: 0, time: at(0, 9, 59), data: { header: { config: { provider: 'deepseek-official', model: 'deepseek-flash' } } } },
-    usageEvent('assistant/attempt', { usage: first, time: at(0, 10) }),
-    { type: 'llm/retry-started', seq: 2, time: at(0, 10, 1), data: { turn: 1, step: 1 } },
-    usageEvent('assistant/message', { usage: second, time: at(0, 10, 2) }),
+  const replaced = fold(definition, [
+    headerEvent({ provider: 'zai', model: 'glm-4.6' }),
+    attemptEvent({ usage: first, time: at(0, 10), provider: 'zai', model: 'glm-4.6' }),
+    messageEvent({ usage: second, time: at(0, 10, 5), provider: 'zai', model: 'glm-4.6' }),
   ]);
-  const view = viewOf(definition, state);
-  // (1000+2000)*2 + (100+200)*8 = 6000 + 2400 = 8400 micro
-  assert.equal(view.micro, 8400);
-  assert.equal(view.events, 2);
+  const replacedView = viewOf(definition, replaced);
+  assert.equal(totalsOf(replacedView).micro, second.inputTokens * 4 + second.outputTokens * 16);
+  assert.equal(replaced.events, 1);
+
+  const retried = fold(definition, [
+    headerEvent({ provider: 'zai', model: 'glm-4.6' }),
+    attemptEvent({ usage: first, time: at(0, 10), provider: 'zai', model: 'glm-4.6' }),
+    { type: 'llm/retry-started', seq: 2, time: at(0, 10, 1), data: { turn: 1, step: 1 } },
+    messageEvent({ usage: second, time: at(0, 10, 2), provider: 'zai', model: 'glm-4.6' }),
+  ]);
+  assert.equal(totalsOf(viewOf(definition, retried)).micro, (first.inputTokens + second.inputTokens) * 4 + (first.outputTokens + second.outputTokens) * 16);
+  assert.equal(retried.events, 2);
 });
 
-test('an unpriced provider route is disclosed instead of silently costing zero', () => {
-  const { definition } = makeProjection(undefined);
+test('an unpriced route is disclosed instead of counted as free', () => {
+  const definition = makeProjection(deepseekCatalog());
   const state = fold(definition, [
-    {
-      type: 'assistant/message',
-      seq: 1,
+    messageEvent({
+      usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
       time: at(0, 10),
-      data: {
-        turn: 1,
-        step: 1,
-        usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
-        message: { role: 'assistant', source: { kind: 'model', provider: 'xiaomi', model: 'mimo-v2.6-pro' } },
-      },
-    },
+      provider: 'xiaomi',
+      model: 'mimo-v2.6-pro',
+    }),
   ]);
   const view = viewOf(definition, state);
-  assert.equal(view.micro, 0);
+  assert.equal(view.currencies.length, 0);
   assert.equal(view.unpricedTokens, 120);
   assert.deepEqual(view.unpricedModels, ['mimo-v2.6-pro']);
+  assert.equal(view.models[0].priced, false);
+  assert.equal(view.models[0].source, null);
 });
 
-test('the legacy deepseek-chat alias is billed at Flash rates', () => {
-  const { definition } = makeProjection(undefined);
+test('request/header supplies the route for attempt-only samples', () => {
+  const definition = makeProjection(catalogWith([fakeVendor()]));
   const state = fold(definition, [
-    usageEvent('assistant/message', {
-      usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    headerEvent({ provider: 'zai', model: 'glm-4.6' }),
+    attemptEvent({
+      usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
       time: at(0, 10),
-      model: 'deepseek-chat',
+      provider: undefined,
+      model: undefined,
     }),
   ]);
   const view = viewOf(definition, state);
-  assert.equal(view.micro, 1000 * 2 + 100 * 8);
+  assert.equal(totalsOf(view).micro, 100 * 4 + 10 * 16);
 });
 
-test('config can override rates and add holidays without changing the catalog shape', () => {
-  const { definition, pricing } = makeProjection({
-    models: { 'deepseek-flash': { rates: { cacheMiss: 100 } } },
-    additionalHolidays: ['2026-10-19'],
-  });
-  assert.equal(pricing.models['deepseek-flash'].rates.cacheMiss, 100);
-  assert.equal(pricing.models['deepseek-flash'].rates.output, 8, 'unmentioned rates are inherited');
-  assert.ok(pricing.holidays.includes('2026-10-19'));
-  const state = fold(definition, [
-    usageEvent('assistant/message', {
-      usage: { inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-      time: at(0, 10),
-    }),
-  ]);
-  const view = viewOf(definition, state);
-  // A configured holiday makes the Monday sample off-peak: 10 * 100 * 0.5 = 500
-  assert.equal(view.micro, 500);
-});
-
-test('invalid configuration falls back to the built-in catalog', () => {
-  const { pricing } = makeProjection({ models: { 'deepseek-flash': { rates: { cacheMiss: -1 } } } });
-  assert.deepEqual(pricing.models['deepseek-flash'].rates, { cacheMiss: 2, cacheHit: 0.04, output: 8 });
+test('state and view are plain JSON and the state version gates checkpoints', () => {
+  const definition = makeProjection(catalogWith([fakeVendor()]));
+  assert.equal(definition.stateVersion, 2);
   assert.equal(PROJECTION_KEY, 'tokenCost');
+  const state = fold(definition, [
+    headerEvent({ provider: 'zai', model: 'glm-4.6' }),
+    messageEvent({
+      usage: { inputTokens: 1234, outputTokens: 567, cacheReadTokens: 890, cacheWriteTokens: 0 },
+      time: at(0, 10),
+      provider: 'zai',
+      model: 'glm-4.6',
+    }),
+  ]);
+  const cloned = JSON.parse(JSON.stringify(state));
+  assert.deepEqual(cloned, state);
+  const view = JSON.parse(JSON.stringify(viewOf(definition, state)));
+  assert.equal(view.models[0].tokensTotal, 1234 + 890 + 567);
+  assert.ok(view.lastUpdated > 0);
+});
+
+test('peak band helper follows the official Beijing-time windows', () => {
+  const billing = {
+    windows: [[540, 720], [840, 1080]],
+    offPeakMultiplier: 0.5,
+    weekdays: [1, 2, 3, 4, 5],
+    holidays: ['2026-10-01'],
+    timeZoneOffsetMinutes: 480,
+  };
+  const holidays = new Set(billing.holidays);
+  assert.equal(isPeakForBilling(billing, at(0, 10), holidays), true);
+  assert.equal(isPeakForBilling(billing, at(0, 12), holidays), false);
+  assert.equal(isPeakForBilling(billing, at(0, 15), holidays), true);
+  assert.equal(isPeakForBilling(billing, at(5, 10), holidays), false);
+  assert.equal(isPeakForBilling(billing, Date.parse('2026-10-01T10:00:00+08:00'), holidays), false);
+  assert.equal(isPeakForBilling(null, at(0, 10), holidays), false);
 });

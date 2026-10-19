@@ -278,8 +278,40 @@ export function localParts(pricing, timeMs) {
  * Friday, excluding Chinese statutory holidays, 09:00-12:00 or 14:00-18:00.
  */
 export function isPeakTime(pricing, timeMs, holidaySet) {
-  const parts = localParts(pricing, timeMs);
-  if (parts.weekday === 0 || parts.weekday === 6) return false;
-  if (holidaySet.has(parts.date)) return false;
-  return pricing.peakWindows.some(([start, end]) => parts.minuteOfDay >= start && parts.minuteOfDay < end);
+  return isPeakForBilling(deepseekBilling(pricing), timeMs, holidaySet);
 }
+
+/** Time zone every Chinese vendor's wall-clock pricing rule is stated in. */
+export const DEFAULT_TIME_ZONE_OFFSET_MINUTES = 480;
+
+/**
+ * Normalized billing descriptor of the DeepSeek official catalog, in the same
+ * shape a vendor catalog's `billing` block normalizes to.
+ */
+export function deepseekBilling(pricing) {
+  return {
+    timeZoneOffsetMinutes: Number.isInteger(pricing.timeZoneOffsetMinutes) ? pricing.timeZoneOffsetMinutes : DEFAULT_TIME_ZONE_OFFSET_MINUTES,
+    windows: (Array.isArray(pricing.peakWindows) ? pricing.peakWindows : []).map(([start, end]) => [start, end]),
+    offPeakMultiplier: pricing.offPeakMultiplier,
+    weekdays: [1, 2, 3, 4, 5],
+    holidays: Array.isArray(pricing.holidays) ? [...pricing.holidays] : [],
+  };
+}
+
+/**
+ * Whether one instant is peak under a vendor billing descriptor (Beijing time).
+ *
+ * @param {object | null | undefined} billing - windows/offPeakMultiplier/weekdays/holidays.
+ * @param {number} timeMs - epoch milliseconds of the usage sample.
+ * @param {Set<string>} holidaySet - statutory holidays of the vendor, `YYYY-MM-DD`.
+ */
+export function isPeakForBilling(billing, timeMs, holidaySet) {
+  if (billing === null || billing === undefined) return false;
+  const timeZoneOffsetMinutes = Number.isInteger(billing.timeZoneOffsetMinutes) ? billing.timeZoneOffsetMinutes : DEFAULT_TIME_ZONE_OFFSET_MINUTES;
+  const parts = localParts({ timeZoneOffsetMinutes }, timeMs);
+  const weekdays = Array.isArray(billing.weekdays) && billing.weekdays.length > 0 ? billing.weekdays : [1, 2, 3, 4, 5];
+  if (!weekdays.includes(parts.weekday)) return false;
+  if (holidaySet.has(parts.date)) return false;
+  return billing.windows.some(([start, end]) => parts.minuteOfDay >= start && parts.minuteOfDay < end);
+}
+
