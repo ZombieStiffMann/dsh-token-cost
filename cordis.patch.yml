@@ -1,0 +1,6 @@
+# Insert the Host half beside the token-meter and session-projection rows.
+# Override this `token-cost` row's `config` in the profile patch layer
+# (%DSH_PROFILE_DIR%\cordis.patch.yml) to replace the built-in price catalog.
+- insert:
+    - id: token-cost
+      name: 'dsh-token-cost'

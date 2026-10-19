@@ -1,0 +1,32 @@
+<!doctype html>
+<!--
+  Minimized structural excerpt of the public DeepSeek API pricing page
+  (https://api-docs.deepseek.com/zh-cn/quick_start/pricing, read 2026-10-19).
+
+  Only the table shape and footnote wording that official-pricing.js parses are
+  kept, so the parser tests can run offline. DeepSeek names and prices belong to
+  DeepSeek; sources and dates are recorded in ./README.md.
+-->
+<html lang="zh-cn">
+<body>
+<article>
+<div style="font-size:14px">
+<b>
+<table style="text-align:center">
+<tr><td colspan="3" style="text-align:center">模型</td><td>deepseek-flash<sup>(1)</sup></td><td>deepseek-v4-pro</td></tr>
+<tr><td rowspan="6">价格<sup>(2)</sup></td><td rowspan="2">百万tokens输入<br>（缓存命中）</td><td>空闲时段</td><td>0.02元</td><td>0.15元</td></tr>
+<tr><td>高峰时段</td><td>0.04元</td><td>0.30元</td></tr>
+<tr><td rowspan="2">百万tokens输入<br>（缓存未命中）</td><td>空闲时段</td><td>1元</td><td>4.5元</td></tr>
+<tr><td>高峰时段</td><td>2元</td><td>9.0元</td></tr>
+<tr><td rowspan="2">百万tokens输出</td><td>空闲时段</td><td>4元</td><td>13.5元</td></tr>
+<tr><td>高峰时段</td><td>8元</td><td>27.0元</td></tr>
+<tr><td colspan="3">并发限制<sup>(3)</sup></td><td>2500</td><td>500</td></tr>
+</table>
+</b>
+</div>
+<div style="font-size:14px">
+<p>(2) 空闲时段价格为高峰时段价格的一半。北京时间周一至周五（不含中国法定节假日）9:00 - 12:00、14:00 - 18:00 为高峰时段；其余时段，包括周末及中国法定节假日全天均为空闲时段。</p>
+</div>
+</article>
+</body>
+</html>

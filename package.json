@@ -1,0 +1,63 @@
+{
+  "name": "dsh-token-cost",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness plugin that shows the estimated cost of tokens consumed in the current session, priced at the latest official rates and the peak/off-peak band of each usage timestamp.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "pricing.js",
+    "official-pricing.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "test": "node --test test/fold.test.mjs test/price-parser.test.mjs && node test/component.test.cjs",
+    "test:fold": "node --test test/fold.test.mjs",
+    "test:parser": "node --test test/price-parser.test.mjs",
+    "test:component": "node test/component.test.cjs"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "token-cost",
+    "llm-cost",
+    "pricing",
+    "plugin"
+  ],
+  "author": "zombiestiffmann",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zombiestiffmann/dsh-token-cost.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zombiestiffmann/dsh-token-cost/issues"
+  },
+  "homepage": "https://github.com/zombiestiffmann/dsh-token-cost#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat"
+      ]
+    }
+  }
+}

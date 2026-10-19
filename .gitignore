@@ -1,0 +1,29 @@
+# Node / tooling
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Test and coverage output
+coverage/
+.nyc_output/
+*.tap
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# Local environment and secrets
+.env
+.env.*
+*.local
+*.key
+*.pem
+
+# Harness-local artifacts (never part of the plugin)
+.dsh/
+plugin-manager/

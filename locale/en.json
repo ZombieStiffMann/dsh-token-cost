@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Token Cost",
+    "description": "Shows the estimated cost of tokens consumed in the current session beside the token-usage pill, priced at DeepSeek's latest official rates and the peak/off-peak band of each usage timestamp."
+  }
+}
